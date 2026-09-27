@@ -35,10 +35,10 @@ static double reference_term(const double *d, const double *row) {
         return exp(fmax(-6, fmin(6, z)));
     }
 }
-static char *drive(const double *X, const double *y, int classes, sym_family_params_t *p,
-                   int capacity, int rows, int32_t *size) {
+static char *drive(const double *X, const double *y, int train_rows, int classes,
+                   sym_family_params_t *p, int capacity, int rows, int32_t *size) {
     sym_family_search_t *s =
-        sym_family_search_new(X, 60, 3, y, classes > 0, classes, p, capacity, rows);
+        sym_family_search_new(X, train_rows, 3, y, classes > 0, classes, p, capacity, rows);
     CHECK(s);
     CHECK(sym_family_search_finish(s) == NULL);
     double *features = malloc((size_t)capacity * rows * p->terms * sizeof(double));
@@ -84,6 +84,42 @@ static char *drive(const double *X, const double *y, int classes, sym_family_par
     free(features);
     return bytes;
 }
+/* Exercise full/partial row tiles, candidate tails and the 8 MiB cache bound.
+ * The external evaluator never caches: saved bytes must match the C fit path. */
+static void cache_boundaries(void) {
+    const int counts[] = {127, 128, 129, 4095, 4096, 4097};
+    double *X = malloc((size_t)4097 * 3 * sizeof(double));
+    double *y = malloc((size_t)4097 * sizeof(double));
+    CHECK(X && y);
+    for (int r = 0; r < 4097; r++) {
+        X[3 * r] = (r % 101 - 50) / 32.;
+        X[3 * r + 1] = (r % 23 - 11) / 16.;
+        X[3 * r + 2] = (r % 17 - 8) / 8.;
+        y[r] = X[3 * r] + .3 * X[3 * r + 1] * X[3 * r + 2];
+    }
+    sym_family_params_t p;
+    sym_family_params_init(&p);
+    p.population = 11;
+    p.generations = 2;
+    p.elite = 2;
+    p.terms = 32;
+    p.operators = 15;
+    p.validation_fraction = .2;
+    for (int i = 0; i < 6; i++) {
+        sym_family_model_t *m = sym_family_fit(X, counts[i], 3, y, 0, 0, &p);
+        CHECK(m);
+        char *actual;
+        int32_t n, expected_n;
+        CHECK(sym_family_save(m, &actual, &n) == 0);
+        char *expected = drive(X, y, counts[i], 0, &p, 8, 128, &expected_n);
+        CHECK(n == expected_n && memcmp(actual, expected, n) == 0);
+        sym_free_buffer(actual);
+        sym_free_buffer(expected);
+        sym_family_free(m);
+    }
+    free(X);
+    free(y);
+}
 int main(void) {
     double X[180], y[60];
     for (int i = 0; i < 60; i++) {
@@ -114,7 +150,7 @@ int main(void) {
             for (int mode = 0; mode < 3; mode++) {
                 int32_t n;
                 char *bytes =
-                    drive(X, y, classes, &p, mode == 0 ? 1 : 7, mode == 1 ? 17 : 60, &n);
+                    drive(X, y, 60, classes, &p, mode == 0 ? 1 : 7, mode == 1 ? 17 : 60, &n);
                 CHECK(n == length && memcmp(bytes, baseline, n) == 0);
                 sym_free_buffer(bytes);
             }
@@ -145,8 +181,9 @@ int main(void) {
         CHECK(sym_family_search_propose(s, &b) == 1);
         sym_family_search_free(s);
     }
+    cache_boundaries();
     puts(
         "family step: 18 external-evaluator runs, QR tile parity, atomic accept, polish, elite "
-        "cache, cancellation and SYM2 passed");
+        "cache, cancellation, SYM2 and 6 cache-boundary cases passed");
     return 0;
 }

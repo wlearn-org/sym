@@ -50,6 +50,13 @@ for rank-deficient features. Inputs, targets, term parameters, coefficients and
 final predictions retain the existing family payload's float32 precision.
 Intermediate operator evaluation, the intercept and QR arithmetic use doubles.
 
+The C fit driver caches features across the moments, QR and loss passes for its
+8-candidate chunks. The cache is capped at 8 MiB (3 MiB for 4096 rows × 12 terms),
+plus the existing row-tile scratch buffer of at most 256 KiB. Larger datasets
+cache a prefix of complete row tiles and recompute the remainder. Failed cache
+allocation falls back to uncached evaluation. This changes neither solver order
+nor fitted artifact bytes; the external evaluator API remains unchanged.
+
 `validationFraction` reserves a deterministic seeded holdout. Coefficients and
 centering use training rows only; archive selection, polishing and early stopping
 use holdout MSE plus `complexityPenalty * complexity`. Without a holdout, selection

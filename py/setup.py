@@ -54,11 +54,6 @@ setup(
         'numpy>=1.22',
         'wlearn>=0.1.0',
     ],
-    extras_require={
-        'polygrad': ['polygrad>=0.6.0,<0.7'],
-        'verify': ['z3-solver<4.15.4'],
-        'all': ['polygrad>=0.6.0,<0.7', 'z3-solver<4.15.4'],
-    },
     packages=find_packages(),
     ext_modules=[
         Extension(

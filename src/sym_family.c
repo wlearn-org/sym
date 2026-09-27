@@ -712,16 +712,33 @@ sym_family_model_t *sym_family_fit(const double *X, int32_t rows, int32_t cols, 
         fail("out of memory allocating family tile");
         return NULL;
     }
+    /* Cache a prefix of whole row tiles for the current eight-candidate chunk.
+     * The bound excludes the existing <=256 KiB tile scratch buffer. Allocation
+     * failure only loses this optimization; it must not make a fit fail. */
+    const size_t cache_limit = 8u * 1024u * 1024u;
+    size_t cache_rows = cache_limit / (8u * p->terms * sizeof(double));
+    cache_rows = cache_rows >= (size_t)rows ? (size_t)rows : cache_rows / 128u * 128u;
+    double *cache = malloc(cache_rows * 8u * p->terms * sizeof(double));
+    if (!cache)
+        cache_rows = 0;
     const sym_family_batch_t *batch;
     int rc;
     while ((rc = sym_family_search_propose(s, &batch)) > 0) {
         int count = batch->candidates * batch->rows * batch->terms;
-        if (sym_family_search_score(s, batch->id, features, count) ||
-            sym_family_search_accept(s, batch->id, features, count)) {
+        int cached = (size_t)batch->row_start + batch->rows <= cache_rows;
+        /* Tile-major storage preserves the ABI's candidate/row/term layout,
+         * including partial candidate chunks. Stage zero overwrites all cached
+         * tiles before QR/loss replay; each polish trial starts a new stage zero. */
+        double *tile = cached ? cache + (size_t)batch->row_start * batch->candidates * batch->terms
+                              : features;
+        if (((!cached || batch->stage == 0) &&
+             sym_family_search_score(s, batch->id, tile, count)) ||
+            sym_family_search_accept(s, batch->id, tile, count)) {
             rc = -1;
             break;
         }
     }
+    free(cache);
     sym_family_model_t *m = rc == 0 ? sym_family_search_finish(s) : NULL;
     free(features);
     sym_family_search_free(s);
