@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "Symbolic regression, classification, and formula features backed by the wlearn C11 core"
 readme = "README.md"
 license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{name = "Anton Zemlyansky"}]
 requires-python = ">=3.9"
 dependencies = ["numpy>=1.22", "wlearn>=0.1.0"]
 keywords = ["symbolic-regression", "symbolic-classification", "formula", "machine-learning", "wlearn", "polygrad"]

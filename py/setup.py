@@ -1,7 +1,7 @@
 import os
 import subprocess
 import sys
-from setuptools import Extension, find_packages, setup
+from setuptools import Extension, setup
 
 if sys.platform == 'win32':
     sys.exit('wlearn-sym requires Linux. Windows is not supported.')
@@ -10,7 +10,6 @@ here = os.path.dirname(os.path.abspath(__file__))
 csrc = os.path.join(here, 'csrc')
 repo_root = os.path.dirname(here)
 src_dir = os.path.join(repo_root, 'src')
-readme = os.path.join(here, 'README.md')
 
 
 def _repo_source_files():
@@ -41,20 +40,6 @@ sources = [
 sources.append(os.path.join('wlearn_sym', '_native.c'))
 
 setup(
-    name='wlearn-sym',
-    version='0.1.0',
-    description='Symbolic regression, classification, and formula features backed by the wlearn C11 core',
-    long_description=open(readme, encoding='utf-8').read() if os.path.isfile(readme) else '',
-    long_description_content_type='text/markdown',
-    author='Anton Zemlyansky',
-    url='https://github.com/wlearn-org/sym',
-    license='Apache-2.0',
-    python_requires='>=3.9',
-    install_requires=[
-        'numpy>=1.22',
-        'wlearn>=0.1.0',
-    ],
-    packages=find_packages(),
     ext_modules=[
         Extension(
             'wlearn_sym._native',

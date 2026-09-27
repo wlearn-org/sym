@@ -703,22 +703,27 @@ sym_family_model_t *sym_family_search_finish(sym_family_search_t *s) {
 sym_family_model_t *sym_family_fit(const double *X, int32_t rows, int32_t cols, const double *y,
                                    int32_t task, int32_t classes,
                                    const sym_family_params_t *p) {
-    sym_family_search_t *s = sym_family_search_new(X, rows, cols, y, task, classes, p, 8, 128);
+    enum { FIT_CANDIDATES = 8, FIT_TILE_ROWS = 128 };
+    sym_family_search_t *s = sym_family_search_new(
+        X, rows, cols, y, task, classes, p, FIT_CANDIDATES, FIT_TILE_ROWS);
     if (!s)
         return NULL;
-    double *features = malloc((size_t)8 * 128 * p->terms * sizeof(double));
+    /* Size all storage from the accepted search shape, never a second default. */
+    const size_t row_values = (size_t)s->capacity * s->params.terms;
+    const size_t tile_rows = (size_t)s->tile_rows;
+    double *features = malloc(row_values * tile_rows * sizeof(double));
     if (!features) {
         sym_family_search_free(s);
         fail("out of memory allocating family tile");
         return NULL;
     }
-    /* Cache a prefix of whole row tiles for the current eight-candidate chunk.
-     * The bound excludes the existing <=256 KiB tile scratch buffer. Allocation
+    /* Cache a prefix of whole row tiles for the current candidate chunk.
+     * The bound excludes the separately sized tile scratch buffer. Allocation
      * failure only loses this optimization; it must not make a fit fail. */
     const size_t cache_limit = 8u * 1024u * 1024u;
-    size_t cache_rows = cache_limit / (8u * p->terms * sizeof(double));
-    cache_rows = cache_rows >= (size_t)rows ? (size_t)rows : cache_rows / 128u * 128u;
-    double *cache = malloc(cache_rows * 8u * p->terms * sizeof(double));
+    size_t cache_rows = cache_limit / (row_values * sizeof(double));
+    cache_rows = cache_rows >= (size_t)rows ? (size_t)rows : cache_rows / tile_rows * tile_rows;
+    double *cache = malloc(cache_rows * row_values * sizeof(double));
     if (!cache)
         cache_rows = 0;
     const sym_family_batch_t *batch;
