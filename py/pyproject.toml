@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wlearn-sym"
+version = "0.1.0"
+description = "Symbolic regression, classification, and formula features backed by the wlearn C11 core"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.22", "wlearn>=0.1.0"]
+keywords = ["symbolic-regression", "symbolic-classification", "formula", "machine-learning", "wlearn", "polygrad"]
+
+[project.optional-dependencies]
+polygrad = ["polygrad>=0.6.0,<0.7"]
+verify = ["z3-solver<4.15.4"]
+all = ["polygrad>=0.6.0,<0.7", "z3-solver<4.15.4"]
+
+[project.urls]
+Homepage = "https://wlearn.org"
+Repository = "https://github.com/wlearn-org/sym"
+Issues = "https://github.com/wlearn-org/sym/issues"
+
+[tool.setuptools.packages.find]
+include = ["wlearn_sym*"]
+
+[tool.setuptools.package-data]
+wlearn_sym = ["_native.c"]

@@ -1,0 +1,26 @@
+build/
+.emscripten-cache/
+.tmp/
+node_modules/
+**/node_modules/
+**/build/
+**/__pycache__/
+**/.pytest_cache/
+**/*.egg-info/
+**/*.so
+**/*.tgz
+*.pyc
+
+# Package source mirrors and build outputs are regenerated from src/.
+/js/csrc/
+/py/csrc/
+/js/wasm/
+/js/dist/
+/references/
+/build-asan/
+/bench/results/
+# Local agent/research records; README is the only versioned Markdown.
+*.md
+!README.md
+
+.ruff_cache/

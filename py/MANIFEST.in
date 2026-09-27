@@ -1,0 +1,4 @@
+include README.md
+include csrc/*.c
+include csrc/*.h
+include wlearn_sym/_native.c

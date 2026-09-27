@@ -1,0 +1,85 @@
+{
+  "name": "@wlearn/sym",
+  "version": "0.1.0",
+  "description": "Symbolic regression, classification, and formula features backed by the wlearn C11 core",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "require": "./src/index.js",
+      "default": "./src/index.js"
+    }
+  },
+  "files": [
+    "src/",
+    "csrc/",
+    "wasm/",
+    "dist/sym.js",
+    "dist/sym.mjs",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node ../test/test.js && node ../test/test_search.js && node ../test/test_family.js && node ../test/test_family_search.js",
+    "test:browser": "node ../test/test-browser.js",
+    "build": "bash scripts/build-wasm.sh",
+    "verify": "bash scripts/verify-exports.sh",
+    "build:browser": "bash scripts/build-browser.sh",
+    "prepack": "node scripts/prepack.js",
+    "prepublishOnly": "node scripts/prepublish.js",
+    "test:types": "tsc --strict --noEmit --target es2020 --module commonjs --moduleResolution node ../test/types.ts"
+  },
+  "dependencies": {
+    "@wlearn/core": "^0.3.0",
+    "@wlearn/types": "^0.2.0"
+  },
+  "peerDependencies": {
+    "polygrad": ">=0.6.0 <0.7.0"
+  },
+  "peerDependenciesMeta": {
+    "polygrad": {
+      "optional": true
+    }
+  },
+  "keywords": [
+    "symbolic-regression",
+    "symbolic-classification",
+    "formula",
+    "interpretable-machine-learning",
+    "machine-learning",
+    "wasm",
+    "webassembly",
+    "wlearn",
+    "polygrad"
+  ],
+  "author": "Anton Zemlyansky",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wlearn-org/sym.git",
+    "directory": "js"
+  },
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "esbuild": "^0.27.3",
+    "playwright": "^1.58.2",
+    "polygrad": ">=0.6.0 <0.7.0",
+    "typescript": "^5.9.3"
+  },
+  "browser": {
+    "node:fs": "./src/empty.js",
+    "node:path": "./src/empty.js",
+    "node:crypto": "./src/empty.js",
+    "ws": "./src/empty.js"
+  },
+  "bugs": {
+    "url": "https://github.com/wlearn-org/sym/issues"
+  },
+  "homepage": "https://wlearn.org",
+  "types": "src/index.d.ts"
+}
