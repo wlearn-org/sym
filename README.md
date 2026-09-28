@@ -1,247 +1,209 @@
 # wlearn/sym
 
-Symbolic regression, symbolic classification, and supervised formula features for wlearn.
+Symbolic regression, classification and supervised formula features. One C11
+core owns search, candidate selection, fitted formulas and portable prediction.
+JavaScript and Python provide wlearn lifecycle/artifacts and optional execution
+through Polygrad's public frontends. No private CUDA API or direct link to
+Polygrad's C core is required.
 
-`sym` is a C-first original wlearn model package. The C11 core owns tree and additive-family search, protected operator evaluation, frontier tracking and prediction. Tree models use raw `SYM1` serialization; new family models use a versioned `SYM2` family payload inside WLRN; legacy JSON remains readable. JS and Python wrap that core, package `.wlrn` bundles, and register loaders with wlearn. Polygrad is optional: the default path uses it only for finalist formula execution/refinement, while `engine: "pg-family"` exposes explicit Polygrad family search. Z3 is optional for post-fit verification in Python.
+This is an unreleased 0.1.0 candidate using local Polygrad 0.6. Publication and
+fixed published dependency pins follow Polygrad's release qualification.
 
-## Search strategy and backend
+## Strategies and backends
 
-The default is `strategy: 'tree', backend: 'c'`. Regression and classification
-also support `strategy: 'family', backend: 'c'`: C owns the population, RNG,
-selection, coefficient fitting, archive and prediction. No Polygrad installation
-is needed for either C path. `FormulaTransformer` remains tree-only.
-
-| Selection | Status | JavaScript fit |
+| Selection | Search | JavaScript `fit` |
 | --- | --- | --- |
 | `tree` + `c` | Default tree search | Synchronous |
-| `family` + `c` | Fixed-width additive family search | Synchronous |
-| `family` + `polygrad` | Shared-search scorer not implemented | Rejected |
-| `tree` + `polygrad` | Not implemented | Rejected |
-| `engine: 'pg-family'` | Temporary legacy frontend search | Promise |
+| `family` + `c` | Additive or hierarchical family search | Synchronous |
+| `family` + `polygrad` | Same C search, device feature evaluation/QR/loss | Promise |
+| `tree` + `polygrad` | Unsupported; raises an error | — |
 
-The old `engine: 'c'`, `'wasm'`, `'c-wasm'` and `'auto'` aliases resolve to tree+C.
-Conflicting engine/strategy/backend settings raise an error. The legacy
-`pg-family` engine remains a separate algorithm; selecting it explicitly may
-also specify `strategy: 'family', backend: 'polygrad'`. It will be retired after
-shared scoring and artifact conversion are qualified. `getParams()` records
-resolved settings; changing strategy/backend with `setParams()` invalidates the
-fitted model. A rejected configuration leaves the previous model intact.
+Both family backends support regression and binary/multiclass classification.
+`FormulaTransformer` uses tree search. `predict`, `predictProba`, `score`, `save`
+and `dispose` use the fitted C model synchronously, including after Polygrad
+training. `predictPolygrad`/`predict_polygrad` explicitly execute the selected
+formula on Polygrad. Python methods are synchronous.
 
-### C family controls and numerical contract
+The historical `engine: 'pg-family'` setting now aliases family+Polygrad. Its
+former JS/Python search controllers have been removed; refitting can produce a
+different formula. Old `engine: 'c'`, `'wasm'`, `'c-wasm'` and `'auto'` select
+tree+C. Conflicting settings raise errors. Changing strategy/backend invalidates
+the fitted model. Failed refits preserve the previous fitted model.
 
-Use `terms` (1–32, default 6), `population` (default 128), `generations` (20),
+```js
+const { SymbolicRegressor } = require('@wlearn/sym')
+const model = await SymbolicRegressor.create({
+  strategy: 'family', backend: 'polygrad',
+  terms: 6, population: 128, generations: 20, seed: 42,
+  polishPasses: 2, polishBatchSize: 32, hierarchical: true,
+  polygrad: { core: 'native', device: 'cuda' }
+})
+await model.fit(X, y)
+const predictions = model.predict(Xtest)
+const bytes = model.save()
+```
+
+```python
+from wlearn_sym import SymbolicRegressor
+model = SymbolicRegressor({
+    "strategy": "family", "backend": "polygrad", "seed": 42,
+    "polishPasses": 2, "polishBatchSize": 32, "hierarchical": True,
+    "polygrad": {"device": "CUDA"},
+}).fit(X, y)
+predictions = model.predict(Xtest)
+bytes_ = model.save()
+```
+
+Use `backend: 'c'` without installing Polygrad. For browser WebGPU, select
+`polygrad: { core: 'wasm', device: 'webgpu' }`; Sym loads Polygrad's public async
+frontend. Caller-supplied runtimes (`polygrad: runtime` or `polygradRuntime`) are
+borrowed, including runtimes shared with another wlearn model. Sym disposes its
+own stages and temporary Models, and only disposes runtimes it creates.
+When no device is specified, Polygrad resolves `POLY_DEV` then `DEV` in native
+processes. Browser code passes runtime options; the browser test harness forwards
+those standard environment selectors into the page.
+
+## Family search and numerical contract
+
+Controls: `terms` 1–32 (default 6), `population` (128), `generations` (20),
 `eliteCount` (8, less than population), `islands` (1), `immigrantRate` (0),
-`polishPasses` (0), and `ridge` (1e-8). Each island selects from its own top half;
-elites are apportioned across islands, capped at half the island population.
-Immigrants replace the configured fraction of each island, rounded down.
-`mutationRate` controls feature/operator replacement; every mutated child also
-receives annealed parameter jitter. There is no cross-island migration yet.
+`polishPasses` (0), `polishBatchSize` (0), `hierarchical` (false), `ridge` (1e-8).
+Each island selects within its own population. There is no family island
+migration. `mutationRate` controls structural replacement and every child gets
+annealed parameter jitter. Unchanged elites retain their readouts and losses.
 
-`operatorSet` accepts `basic`, `smooth`, `full`, or an explicit operator list;
-`operators` also accepts a list. The grammar is a bias plus weighted terms drawn
-from add, subtract, multiply, divide, sin, cos, tanh, logabs, sqrtabs and expclamp.
-It uses division/log epsilon 1e-6 and an exponential clamp of ±6. These differ
-from tree operators. Hierarchical earlier-term references are not supported yet.
+The formula is a bias plus weighted terms. `operatorSet` accepts `basic`,
+`smooth`, `full`, or a list; `operators` accepts names or IDs. Built-ins are
+add/subtract/multiply/divide, sin/cos/tanh, logabs/sqrtabs/expclamp. Family division
+and log use epsilon 1e-6; exp clamps its argument to ±6. Tree operators retain
+their distinct protection rules. Arbitrary language callables are not portable
+operators.
 
-Coefficient fitting uses centered/scaled double-precision Givens QR for mean
-squared error plus `ridge * sum(coef²)`, with an unpenalized intercept. Zero or
-very small QR pivots are assigned zero coefficients; positive ridge is advised
-for rank-deficient features. Inputs, targets, term parameters, coefficients and
-final predictions retain the existing family payload's float32 precision.
-Intermediate operator evaluation, the intercept and QR arithmetic use doubles.
+With `hierarchical: true`, source indices below `nFeatures` select input columns;
+`nFeatures + t` selects an earlier term `t`. Self/forward references are invalid.
+The model stores this directed structure. Formula text uses shared `t0`, `t1`, …
+definitions so nested expressions cannot produce exponentially large strings.
 
-The C fit driver caches features across the moments, QR and loss passes for its
-8-candidate chunks. The cache is capped at 8 MiB (3 MiB for 4096 rows × 12 terms),
-plus the existing row-tile scratch buffer of at most 256 KiB. Larger datasets
-cache a prefix of complete row tiles and recompute the remainder. Failed cache
-allocation falls back to uncached evaluation. This changes neither solver order
-nor fitted artifact bytes; the external evaluator API remains unchanged.
+Sequential polish (`polishBatchSize: 0`) evaluates dependent coordinate trials.
+Positive sizes request frozen-base batches: all active coordinate directions
+plus random multi-parameter proposals, followed by selection. The actual round
+size is at least the coordinate-trial count. This changes the polish policy;
+transport `batchSize` (1–512, default 64) does not change proposal/RNG order.
 
-`validationFraction` reserves a deterministic seeded holdout. Coefficients and
-centering use training rows only; archive selection, polishing and early stopping
-use holdout MSE plus `complexityPenalty * complexity`. Without a holdout, selection
-uses training MSE. The selected model is not refit on the reserved rows.
-Classification preserves the legacy ±1 margin targets, binary/one-vs-rest fitting,
-and sigmoid/softmax conversion. These probabilities are not calibrated.
-Tree-only controls, non-MSE family losses, hierarchical sources and Polygrad
-execution for C-family models raise explicit errors.
+C fits readouts using centered/scaled double Givens QR for
+`mean_squared_error + ridge * sum(coef²)`, with an unpenalized intercept.
+Rank-deficient pivots receive zero coefficients; positive ridge is advised.
+Inputs, targets, term parameters, coefficients and returned C margins are
+float32-rounded. Intermediate features, intercepts and C QR use double precision.
 
-New C-family fits write `wlearn.sym.regressor@2` or `wlearn.sym.classifier@2`,
-containing a little-endian `SYM2` payload with explicit family kind and semantics
-version 2. The payload owns dimensions, protected operators, float32 parameters,
-readouts, archive and selection metrics. Unused arithmetic parameters are fixed
-to `(p0=1, p1=0)`; unary terms fix their unused second feature to zero. Complexity
-counts only active parameters: three arithmetic terms have complexity 7.
-Archive identity ignores these unused genes; algebraically equivalent formulas
-are not generally deduplicated. AutoML can choose immigrant rates 0, 0.1, 0.2 or 0.3.
+The Polygrad scorer keeps data and feature matrices on the device, computes
+centered/scaled QR factors and explicit prediction losses, and transfers only
+compact factors/statistics/readouts. C applies original-unit ridge and solves
+the small triangular systems. This avoids raw-moment Gram cancellation. It does
+not mean every operation is on the GPU. All proposed candidates, including
+polish trials, use the selected scorer; there is no hidden C pre-ranking.
 
-Tree artifacts remain `SYM1`/`@1`. Legacy family JSON `@1` remains readable and
-keeps its historical metrics and format when re-saved; a successful C refit writes
-`@2`. C-family loading and prediction require no Polygrad. Shared Polygrad scoring
-remains unimplemented; this is an unreleased checkpoint.
+Native CPU/CUDA scoring defaults to float64. Browser WebGPU uses float32;
+`scorerDtype` can explicitly select a supported precision. Different reductions
+and precision can change near-tied search decisions. Large cosine phases that
+exceed the scorer's precision budget raise an error with a C-backend suggestion;
+there is no silent fallback. Tests compare predictions and losses with declared
+tolerances, not identical search histories for arbitrary datasets/devices.
 
-### External family evaluator contract
+`validationFraction` creates a seeded holdout excluded from centering/readout
+fitting. Selection, polish and early stopping use holdout MSE plus
+`complexityPenalty * complexity`; without a holdout, they use training MSE.
+The selected readout is not refit on the holdout. Classification fits ±1 margins
+and converts them with sigmoid/softmax; these probabilities are not calibrated.
 
-`src/sym_family.h` exposes an owned search state with propose/accept/finish/free.
-A proposal contains descriptors `[candidate, term, 5]` (feature A, feature B,
-operator, p0, p1), a row tile and a stable identity. The host returns finite
-features `[candidate, row, term]`. C retains train-only moments, centered/scaled
-QR, float32 readout rounding and loss reduction in three ordered passes. Neither
-Gram-matrix solves nor candidate pre-ranking change the numerical contract.
+`refinePolygrad(X, y, { epochs, lr, index })` / `refine_polygrad` use public
+Polygrad Model autodiff to optimize active nonlinear parameters, readout weights
+and intercept of a fixed family structure. Only training rows from the same
+seeded split enter the optimizer. C recomputes losses and commits only when the
+validation-plus-complexity objective does not worsen beyond `tolerance` (1e-10).
+`index` selects a multiclass head; regression/binary use zero. Supply the same
+training rows/order to reuse the search split. This holdout is a selection set,
+not an unbiased final test set. Refinement is explicit, not an automatic fit step.
 
-Candidate batches are bounded to 64 and tiles to 4096 rows. Proposing twice before
-accepting returns the same work; invalid submissions leave that work retryable.
-Copy borrowed views before async work or Wasm memory growth. Polish submits one
-dependent trial at a time. Elites reuse their deterministic fit because data,
-holdout mask and objective do not change. Freeing a search cancels it; finishing
-transfers the model only after the final proposal reports completion.
+Tree refinement retains its existing regression-only behavior and training-MSE
+acceptance on the supplied data. `FormulaVerifier` reports unsupported family
+proofs rather than treating family terms as tree nodes. Python optionally uses
+Z3 for supported tree checks.
 
-This ABI is exercised by independent C, JS and Python feature evaluators. A
-Polygrad implementation still needs kernel, transfer-cost and numerical tests;
-this interface alone establishes no accelerator performance claim.
+## Artifacts and integration
 
-## Packages
+Only WLRN bundles are public persistence. `save()` returns bytes; `save(path)`
+writes those bytes in Python/Node. `load` accepts bytes or a path.
 
-- npm: `@wlearn/sym`
-- PyPI: `wlearn-sym`, imported as `wlearn_sym`
-- Bundle typeIds: tree/legacy `wlearn.sym.regressor@1`, `wlearn.sym.classifier@1`, `wlearn.sym.transformer@1`; new family `wlearn.sym.regressor@2`, `wlearn.sym.classifier@2`
+- Tree: `SYM1`, `wlearn.sym.{regressor,classifier,transformer}@1`.
+- Flat family: `SYM2` semantics 2, `wlearn.sym.{regressor,classifier}@2`.
+- Hierarchical family: `SYM2` semantics 3, `wlearn.sym.{regressor,classifier}@3`.
+- Legacy family JSON `@1`: readable without Polygrad, with original metrics;
+  re-saving preserves its legacy format. A refit writes the current format.
 
-## Layout
+Static class `typeId` identifies the tree format; `save` selects the actual
+format. Readers reject typeId/payload mismatches and invalid references.
+Unused arithmetic parameters are fixed to `(1, 0)` and unary second sources to
+zero. Complexity and archive identity ignore unused genes; general algebraic
+equivalence is not deduplicated.
 
-- `src/`: canonical C11 source; tree search, refinement and persistence are separate files
-- `js/csrc/`, `py/csrc/`: generated distribution copies, never versioned
-- `js/`: npm package, Emscripten WASM build, browser bundles
-- `py/`: Python package with a compiled native extension
-- `bench/`: deterministic benchmark harnesses and result JSON
-- `references/`: inspected symbolic-regression reference repos
-- `test/`: C, JS, browser, Python, and cross-language tests
+Both languages use the wlearn core bundle/registry and Pipeline contracts.
+JS family+Polygrad `fit` is the documented asynchronous base-estimator exception;
+Pipeline/AutoML propagate its Promise. Default AutoML search spaces use C and
+include immigrant rate zero. Backend acceleration, hierarchy and polish are
+explicit choices, not automatic quality improvements. Dispose models when
+replacing them in long-running loops.
 
-`../symcpg/` remains the experimental C + Polygrad / JS + Polygrad workspace. Consolidated product code lives in `sym/`; benchmark-only experiments stay outside product claims until they pass broad, honest benchmarks.
+## Native interfaces and layout
 
-## Build And Test
+`src/` is canonical C. `js/csrc/` and `py/csrc/` are ignored generated package
+copies. `js/` publishes `@wlearn/sym`; `py/` publishes `wlearn-sym`.
+`test/` includes legacy fixtures, C/JS/browser and cross-language checks.
 
-```bash
-make -C sym sync-js-csrc sync-py-csrc
-make -C sym test-c
-cd sym/js && npm run build && npm run build:browser
-make -C sym test
-make -C sym test-browser
+Tree stepping is in `src/sym.h`. Family stepping is in `src/sym_family.h`:
+propose/score/accept/finish/free plus a compact QR-results protocol. Candidate
+batches are bounded at 512, row tiles at 4096. Invalid acceptance is atomic;
+borrowed views must be copied before awaiting or growing Wasm memory. Finishing
+transfers the model once; freeing a search cancels it. Sequential and batched
+polish use the same C state machine. These low-level APIs remain unreleased.
+
+The C fit driver's feature cache is capped at 8 MiB, using 8-candidate chunks
+and a bounded row tile. Uncached suffixes are recomputed; cache allocation
+failure falls back to uncached evaluation without changing fitted bytes.
+
+## Build, test and benchmark
+
+From this repository:
+
+```sh
+make test-c
+npm --prefix js run build
+npm --prefix js run build:browser
+make test
+make test-browser
+make wheel npm-pack
 ```
 
-For local optional Polygrad parity checks:
+Local Polygrad: set `WLEARN_SYM_POLYGRAD_JS=/path/to/polygrad/js` for Node/browser
+builds, `WLEARN_POLYGRAD_PY=/path/to/polygrad/py` for Make, and `POLY_LIB` for its
+fresh native library. For direct Python commands include `py`, wlearn's `py`,
+and Polygrad's `py` on `PYTHONPATH`; set `SYM_LIB_PATH=$PWD/build/libsym.so`.
 
-```bash
-npm --prefix sym/js install
-python -m pip install "sym/py[polygrad]"
-make -C sym test
+```sh
+npm --prefix js run test:polygrad
+POLY_DEV=webgpu node test/test-browser.js
+sh bench/scorer/build.sh
+python -m pytest bench/scorer/test_scorer.py
+python bench/family-backends.py --rows 4096 --population 256 --generations 120 --terms 8 --output results.json
 ```
 
-To test against an unpublished Polygrad checkout, set
-`WLEARN_SYM_POLYGRAD_JS=/path/to/polygrad/js` and/or
-`WLEARN_POLYGRAD_PY=/path/to/polygrad/py`.
+WebGPU checks need a GPU-enabled full Chromium and a display. Tests fail with
+the actual backend error rather than counting an unavailable backend as passed.
+Keep CPU concurrency below half the machine's cores.
 
-## Benchmarks
-
-```bash
-make -C sym bench-friedman
-```
-
-Current Friedman-1 comparison uses full-data symbolic fitting by default. A small internal holdout is noisy for structure selection on this deterministic benchmark; use `validationFraction` only when you explicitly want internal validation.
-
-`population=512`, `generations=120`, `maxNodes=63`, `operatorSet=full`, 3 repeats:
-
-| package | rows | mean fit ms | mean R2 | mean bundle bytes |
-| --- | ---: | ---: | ---: | ---: |
-| `sym` | 512 | 8630.7 | 0.983 | 43277 |
-| `xgboost` | 512 | 138.2 | 0.933 | 328323 |
-| `sym` | 2048 | 34399.4 | 0.967 | 42285 |
-| `xgboost` | 2048 | 148.4 | 0.973 | 340087 |
-
-Interpretation: `sym` can beat XGBoost on 512-row Friedman-1 R2 with compact formulas and is close at 2048 rows, but it is much slower to fit. XGBoost remains the fast predictive baseline.
-
-## Model Surface
-
-- `SymbolicRegressor`: one compact formula optimized for MSE, MAE, or Huber loss.
-- `SymbolicClassifier`: binary logistic score or multiclass one-vs-rest score formulas.
-- `FormulaTransformer`: top-K frontier formulas as supervised generated features.
-- `FormulaVerifier`: honest proof reports: `proved`, `counterexample`, `unknown`, or `unsupported`.
-
-Saved default-engine `.wlrn` bundles contain the raw `SYM1` model blob plus manifest metadata. Bundles load across JS and Python with prediction parity.
-
-JS and Python can also opt into `engine: "pg-family"` for Polygrad summary-kernel family search on regression and classification. Those bundles keep the same `wlearn.sym.*@1` type IDs and set `metadata.engine = "pg-family"`. They are not the default AutoML path.
-
-PG-family supports portable built-in operator subsets through `operatorSet` (`basic`, `smooth`, `full`) or explicit `operators`. Arbitrary JS/Python callables are intentionally not accepted as artifact operators yet.
-
-## Search Controls
-
-The simple path uses one population, full-row scoring, objective-based final
-selection, and no archive beyond the frontier.
-
-Optional controls:
-
-- `islands`, `migrationInterval`, `migrationCount`: split search into island
-  populations with periodic frontier migration.
-- `warmupGenerations`, `warmupMinNodes`: grow allowed formula size over early
-  generations.
-- `broodSize`: generate multiple children for a parent choice and keep the best
-  child.
-- `rowSampleSize`: score ordinary offspring on row subsets; frontier candidates
-  are rescored on full data before export.
-- `localRefineInterval`, `localRefineCount`: run C coefficient refinement on
-  promising candidates during search.
-- `complexityHofSize`, `complexityBucketWidth`, `finalSelector`: keep a
-  complexity-bucket archive and choose the final formula by `objective`, `loss`,
-  or `score`.
-
-`frontier()` returns an objective-sorted archive. It is not guaranteed to be a
-strict nondominated Pareto front.
-
-Current benchmark notes: island/warmup/brood/subset/local-refine controls improve
-Friedman-1/2/3 quality versus the copied `symc` baseline. Complexity HOF is
-available but currently neutral under `finalSelector: 'objective'`; `loss` and
-`score` are explicit tuning options, not defaults.
-
-## Local Polygrad 0.6 migration
-
-This checkout targets the local Polygrad 0.6.0 candidate. Publication and the
-final fixed dependency pin await upstream release acceptance. Use the local
-checkout overrides above while developing; the install commands apply after
-publication.
-
-Formula execution and refinement use the public Model capture API with float32
-inputs, targets and parameters. Protected operations replace non-finite node
-results with zero and clamp each node to ±1e12, matching the C evaluation rules
-within float32 precision. Execution can therefore differ from C double precision
-near discontinuities or for large trigonometric arguments.
-
-Refinement reads updated constants from Model-owned state and evaluates a copy
-with the C backend before committing. Failed or worse candidates leave the
-original model unchanged. Only the selected regression formula (`index=0`) is
-refinable. Original search-time metrics remain attached to the formula; the
-returned report measures MSE on the supplied refinement data and does not claim
-new held-out validation coverage. An installed backend failure raises an error;
-`unsupported` is reserved for unsupported operators or model strategies.
-
-Caller-supplied runtimes are borrowed. Temporary Models are disposed after
-execution/refinement; internally created runtimes are disposed by their owner.
-
-
-### C search stepping
-
-`src/sym.h` exposes `sym_search_new`, `sym_search_propose`,
-`sym_search_score`, `sym_search_accept`, `sym_search_finish` and
-`sym_search_free`. Ordinary `sym_fit` drives this same state machine internally.
-The search owns copies of training inputs and yields bounded scoring batches;
-acceptance validates the complete batch before updating candidates. Batch IDs
-reject stale results. `finish` transfers the fitted model exactly once.
-
-The current implementation supports tree search with the C scorer. Local
-coefficient refinement and final selection remain in C. Separating family
-search and adding a Polygrad scorer to this API are planned work; the existing
-`engine: 'pg-family'` path still uses its frontend implementation.
-
-Batch formula/data views are borrowed until acceptance or destruction. A host
-performing asynchronous evaluation must copy views before yielding and protect
-the search lifetime while work is pending. `wl_sym_search_*` exposes packed
-frontend buffers without depending on C structure padding. These low-level
-interfaces are under development before the initial release.
+`bench/family-backends.py` measures complete fits, including runtime creation
+and graph compilation, on fresh estimators with matched seeds and held-out test
+rows. `bench/scorer/` measures fixed-candidate numerical/steady-state behavior;
+its timings exclude parts of estimator fitting and are not end-to-end speedups.
+Historical experiments under sibling `symcpg` and `sympg` are reference evidence,
+not product benchmark results. C remains the default, especially for small fits.

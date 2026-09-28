@@ -2,9 +2,9 @@
 
 function requirePolygrad() {
   if (typeof process !== 'undefined' && process.env && process.env.WLEARN_SYM_POLYGRAD_JS) {
-    return require(process.env.WLEARN_SYM_POLYGRAD_JS)
+    return require(process.env.WLEARN_SYM_POLYGRAD_JS + '/src/index.async.js')
   }
-  return require('polygrad')
+  return require('polygrad/async')
 }
 
 async function loadPolygrad(options) {
@@ -12,22 +12,26 @@ async function loadPolygrad(options) {
     return loadPolygrad(await options)
   }
   if (options && options.Tensor) return options
-  return requirePolygrad().create(options)
+  // Construction is already asynchronous; let Polygrad resolve options and env.
+  return requirePolygrad().createAsync(options)
 }
 
 function normalizeXForPolygrad(X, nFeatures) {
   if (X instanceof Float64Array || X instanceof Float32Array) {
     if (!nFeatures) throw new Error('nFeatures is required for flat typed-array input')
-    if (X.length % nFeatures !== 0) throw new Error(`flat X length ${X.length} is not divisible by nFeatures ${nFeatures}`)
+    if (X.length % nFeatures !== 0)
+      throw new Error(`flat X length ${X.length} is not divisible by nFeatures ${nFeatures}`)
     return { rows: X.length / nFeatures, cols: nFeatures, data: new Float32Array(X) }
   }
-  if (!Array.isArray(X)) throw new Error('X must be an array of rows or a Float64Array/Float32Array')
+  if (!Array.isArray(X))
+    throw new Error('X must be an array of rows or a Float64Array/Float32Array')
   const rows = X.length
   const cols = rows > 0 && Array.isArray(X[0]) ? X[0].length : 1
   const data = new Float32Array(rows * cols)
   for (let i = 0; i < rows; i++) {
     const row = Array.isArray(X[i]) ? X[i] : [X[i]]
-    if (row.length !== cols) throw new Error(`X row ${i} has ${row.length} columns, expected ${cols}`)
+    if (row.length !== cols)
+      throw new Error(`X row ${i} has ${row.length} columns, expected ${cols}`)
     for (let j = 0; j < cols; j++) data[i * cols + j] = Number(row[j])
   }
   return { rows, cols, data }
@@ -48,9 +52,10 @@ function buildFormulaTensorInternal(Tensor, XTensor, formula, rows, constParams)
     let out
     switch (node.op) {
       case 'const':
-        out = constParams && constParams.has(i)
-          ? constParams.get(i)
-          : constTensor(Tensor, rows, node.value)
+        out =
+          constParams && constParams.has(i)
+            ? constParams.get(i)
+            : constTensor(Tensor, rows, node.value)
         break
       case 'var':
         out = XTensor.getitem([0, rows], node.feature)
@@ -119,9 +124,12 @@ async function evaluateFormulaPolygrad(runtime, formula, X, nFeatures) {
   const x = Tensor.empty([rows, cols], { dtype: 'float32' })
   let model
   try {
-    model = await runtime.Model.fromCallableAsync(({ sym_x }) => buildFormulaTensor(Tensor, sym_x, formula, rows), {
-      inputs: { sym_x: x }
-    })
+    model = await runtime.Model.fromCallableAsync(
+      ({ sym_x }) => buildFormulaTensor(Tensor, sym_x, formula, rows),
+      {
+        inputs: { sym_x: x }
+      }
+    )
     const result = await model.forwardAsync({ sym_x: data })
     return new Float64Array(result.output)
   } finally {
@@ -190,7 +198,8 @@ async function refineFormulaPolygrad(runtime, formula, X, y, nFeatures, opts = {
   const { rows, cols, data } = normalizeXForPolygrad(X, nFeatures)
   if (cols !== nFeatures) throw new Error(`X has ${cols} columns, expected ${nFeatures}`)
   const yData = y instanceof Float32Array ? y : new Float32Array(y)
-  if (yData.length !== rows) throw new Error(`y length (${yData.length}) does not match X rows (${rows})`)
+  if (yData.length !== rows)
+    throw new Error(`y length (${yData.length}) does not match X rows (${rows})`)
 
   const { Tensor, Model } = runtime
   const epochs = opts.epochs ?? opts.steps ?? 80
@@ -198,7 +207,8 @@ async function refineFormulaPolygrad(runtime, formula, X, y, nFeatures, opts = {
   if (!Number.isSafeInteger(epochs) || epochs < 1 || !Number.isFinite(lr) || lr <= 0) {
     throw new Error('epochs must be positive integer and lr positive finite')
   }
-  const params = new Map(), paramObject = {}
+  const params = new Map(),
+    paramObject = {}
   let x, target, model
   try {
     x = Tensor.empty([rows, cols], { dtype: 'float32' })
@@ -208,24 +218,41 @@ async function refineFormulaPolygrad(runtime, formula, X, y, nFeatures, opts = {
       params.set(i, tensor)
       paramObject[`c${i}`] = tensor
     }
-    model = await Model.fromCallableAsync(({ sym_refine_x }) =>
-      buildFormulaTensorInternal(Tensor, sym_refine_x, formula, rows, params), {
-      inputs: { sym_refine_x: x }, targets: { sym_refine_y: target }, params: paramObject,
-      loss: (pred, { sym_refine_y }) => pred.sub(sym_refine_y).square().mean()
-    })
-    const history = await model.fitAsync({ sym_refine_x: data, sym_refine_y: yData }, {
-      epochs, optimizer: opts.optimizer || 'adam', lr
-    })
-    const refinedFormula = JSON.parse(JSON.stringify(formula)), committedConstants = []
+    model = await Model.fromCallableAsync(
+      ({ sym_refine_x }) => buildFormulaTensorInternal(Tensor, sym_refine_x, formula, rows, params),
+      {
+        inputs: { sym_refine_x: x },
+        targets: { sym_refine_y: target },
+        params: paramObject,
+        loss: (pred, { sym_refine_y }) => pred.sub(sym_refine_y).square().mean()
+      }
+    )
+    const history = await model.fitAsync(
+      { sym_refine_x: data, sym_refine_y: yData },
+      {
+        epochs,
+        optimizer: opts.optimizer || 'adam',
+        lr
+      }
+    )
+    const refinedFormula = JSON.parse(JSON.stringify(formula)),
+      committedConstants = []
     for (const i of constNodes) {
       // Read trained Model state, not the tensors originally captured by the graph.
       const value = Number((await model.readBufferAsync(`c${i}`))[0])
-      if (!Number.isFinite(value)) throw new Error('Polygrad refinement produced a non-finite constant')
+      if (!Number.isFinite(value))
+        throw new Error('Polygrad refinement produced a non-finite constant')
       refinedFormula.nodes[i].value = value
       committedConstants.push({ nodeIndex: i, value })
     }
     const pred = await evaluateFormulaPolygrad(runtime, refinedFormula, X, nFeatures)
-    return { status: 'ok', loss: mseFloat64(yData, pred), history, formula: refinedFormula, committedConstants }
+    return {
+      status: 'ok',
+      loss: mseFloat64(yData, pred),
+      history,
+      formula: refinedFormula,
+      committedConstants
+    }
   } finally {
     if (model) model.dispose()
     for (const tensor of [x, target, ...params.values()]) if (tensor) tensor.dispose()

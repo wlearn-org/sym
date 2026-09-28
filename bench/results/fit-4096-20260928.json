@@ -1,0 +1,55 @@
+{
+  "environment": {
+    "python": "3.11.12",
+    "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.35"
+  },
+  "settings": {
+    "rows": 4096,
+    "population": 256,
+    "generations": 30,
+    "terms": 8,
+    "seeds": "11",
+    "device": "CUDA",
+    "hierarchical": false,
+    "polish": 2,
+    "refine": 0,
+    "output": "../temp/runs/20260928-sym-completion/fit-4096.json"
+  },
+  "timing": "Complete fit, fresh estimator/runtime; includes device setup and compilation; no prewarm.",
+  "results": [
+    {
+      "dataset": "smooth",
+      "seed": 11,
+      "backend": "c",
+      "fit_ms": 7443.881284998497,
+      "test_r2": 0.9999962727405418,
+      "bytes": 8140
+    },
+    {
+      "dataset": "smooth",
+      "seed": 11,
+      "backend": "polygrad",
+      "fit_ms": 9521.151086999453,
+      "test_r2": 0.9999962727405418,
+      "bytes": 8154,
+      "max_prediction_delta_from_c": 0.0
+    },
+    {
+      "dataset": "friedman1",
+      "seed": 11,
+      "backend": "c",
+      "fit_ms": 7441.878724996059,
+      "test_r2": 0.9257986571733678,
+      "bytes": 8140
+    },
+    {
+      "dataset": "friedman1",
+      "seed": 11,
+      "backend": "polygrad",
+      "fit_ms": 6708.56813499995,
+      "test_r2": 0.9257986571733678,
+      "bytes": 8154,
+      "max_prediction_delta_from_c": 0.0
+    }
+  ]
+}

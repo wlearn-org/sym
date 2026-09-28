@@ -42,8 +42,8 @@ int sym_family_dimensions(const sym_family_model_t *m, int32_t out[4]) {
     return 0;
 }
 int sym_family_save(const sym_family_model_t *m, char **out, int32_t *length) {
-    if (!m || !out || !length || m->semantics != 2) {
-        sym_set_error("SYM2 requires a fitted semantics-2 family model");
+    if (!m || !out || !length || (m->semantics != 2 && m->semantics != 3)) {
+        sym_set_error("SYM2 requires a fitted family model");
         return -1;
     }
     *out = NULL;
@@ -67,7 +67,7 @@ int sym_family_save(const sym_family_model_t *m, char **out, int32_t *length) {
         return -1;
     }
     memcpy(bytes, "SYM2", 4);
-    uint32_t fields[] = {2, 1, 2, m->cols, m->classes, m->terms, m->frontier, m->heads};
+    uint32_t fields[] = {2, 1, m->semantics, m->cols, m->classes, m->terms, m->frontier, m->heads};
     for (int i = 0; i < 8; i++)
         write_u32(bytes + 4 + 4 * i, fields[i]);
     write_f64(bytes + 36, m->penalty);
@@ -96,7 +96,7 @@ sym_family_model_t *sym_family_load(const char *input, int32_t length) {
     }
     const unsigned char *bytes = (const unsigned char *)input;
     if (memcmp(bytes, "SYM2", 4) || read_u32(bytes + 4) != 2 || read_u32(bytes + 8) != 1 ||
-        read_u32(bytes + 12) != 2) {
+        (read_u32(bytes + 12) != 2 && read_u32(bytes + 12) != 3)) {
         sym_set_error("unsupported family artifact version/kind/semantics");
         return NULL;
     }
@@ -104,9 +104,10 @@ sym_family_model_t *sym_family_load(const char *input, int32_t length) {
     uint32_t terms = read_u32(bytes + 24), frontier = read_u32(bytes + 28),
              heads = read_u32(bytes + 32);
     double penalty = read_f64(bytes + 36);
-    if (!cols || cols > INT32_MAX || classes == 1 || classes > 128 || !terms ||
-        terms > SYM_FAMILY_MAX_TERMS || !frontier || frontier > 128 ||
-        heads != (classes > 2 ? classes : 1) || !isfinite(penalty) || penalty < 0) {
+    if (!cols || cols > INT32_MAX || (read_u32(bytes + 12) == 3 && cols > INT32_MAX - terms) ||
+        classes == 1 || classes > 128 || !terms || terms > SYM_FAMILY_MAX_TERMS || !frontier ||
+        frontier > 128 || heads != (classes > 2 ? classes : 1) || !isfinite(penalty) ||
+        penalty < 0) {
         sym_set_error("invalid family artifact header");
         return NULL;
     }
@@ -135,7 +136,7 @@ sym_family_model_t *sym_family_load(const char *input, int32_t length) {
     sym_family_model_t *m = sym_family_new(cols, classes, terms, frontier);
     if (!m)
         return NULL;
-    m->semantics = 2;
+    m->semantics = read_u32(bytes + 12);
     m->penalty = penalty;
     offset = PREFIX;
     double data[6 * SYM_FAMILY_MAX_TERMS + 6];

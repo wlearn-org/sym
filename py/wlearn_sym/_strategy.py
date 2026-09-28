@@ -6,9 +6,9 @@ def resolve_strategy(params, task):
     if params.get("engine") is not None:
         engine = str(params["engine"]).lower()
         if engine == "pg-family":
-            legacy = ("family", "polygrad", True)
+            legacy = ("family", "polygrad")
         elif engine in ("c", "wasm", "c-wasm", "auto"):
-            legacy = ("tree", "c", False)
+            legacy = ("tree", "c")
         else:
             raise ValueError(f"unsupported sym engine: {engine}")
     strategy = params.get("strategy", legacy[0] if legacy else "tree")
@@ -19,11 +19,9 @@ def resolve_strategy(params, task):
         raise ValueError("engine conflicts with strategy/backend")
     if task == "transformer" and strategy != "tree":
         raise ValueError("family strategy does not support FormulaTransformer")
-    if backend == "polygrad" and not (legacy and legacy[2]):
-        raise ValueError(
-            'shared-search Polygrad backend is not implemented yet; engine="pg-family" remains a separate legacy implementation'
-        )
-    return strategy, backend, bool(legacy and legacy[2])
+    if backend == "polygrad" and strategy == "tree":
+        raise ValueError('tree search currently supports backend="c" only')
+    return strategy, backend
 
 
 def family_search_space(tree):

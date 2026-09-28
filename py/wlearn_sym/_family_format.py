@@ -1,11 +1,23 @@
 """Shared existing family payload and display helpers; no search or runtime."""
+
 from __future__ import annotations
 import math
 from dataclasses import dataclass
 from typing import Any
 import numpy as np
 
-OPS = ["add", "sub", "mul", "div", "sin", "cos", "tanh", "logabs", "sqrtabs", "expclamp"]
+OPS = [
+    "add",
+    "sub",
+    "mul",
+    "div",
+    "sin",
+    "cos",
+    "tanh",
+    "logabs",
+    "sqrtabs",
+    "expclamp",
+]
 PG_FAMILY_MEDIA = "application/vnd.wlearn.sym.pg-family+json"
 OP_PRESETS = {
     "basic": ["add", "sub", "mul", "div"],
@@ -17,13 +29,23 @@ OP_INDEX = {name: i for i, name in enumerate(OPS)}
 
 def resolve_operator_ids(params=None):
     params = params or {}
-    requested = params.get("operators", params.get("operatorSet", params.get("operator_set", "full")))
-    names = requested if isinstance(requested, (list, tuple)) else OP_PRESETS.get(str(requested).lower())
+    requested = params.get(
+        "operators", params.get("operatorSet", params.get("operator_set", "full"))
+    )
+    names = (
+        requested
+        if isinstance(requested, (list, tuple))
+        else OP_PRESETS.get(str(requested).lower())
+    )
     if names is None:
         raise ValueError(f"unsupported pg-family operatorSet: {requested}")
     ids = []
     for value in names:
-        op_id = int(value) if isinstance(value, (int, np.integer)) else OP_INDEX.get(str(value).lower())
+        op_id = (
+            int(value)
+            if isinstance(value, (int, np.integer))
+            else OP_INDEX.get(str(value).lower())
+        )
         if op_id is None or op_id < 0 or op_id >= len(OPS):
             raise ValueError(f"unsupported pg-family operator: {value}")
         if op_id not in ids:
@@ -84,10 +106,19 @@ def _candidate_from_plain(o: dict[str, Any]) -> Candidate:
 
 
 def _formula_text(c: Candidate, feature_names):
-    parts = []
+    parts, expressions = [], []
+    hierarchical = any(i >= len(feature_names) for i in [*c.fa, *c.fb])
     for t in range(c.terms):
-        a = feature_names[int(c.fa[t])] if int(c.fa[t]) < len(feature_names) else f"x{int(c.fa[t])}"
-        b = feature_names[int(c.fb[t])] if int(c.fb[t]) < len(feature_names) else f"x{int(c.fb[t])}"
+        a = (
+            feature_names[int(c.fa[t])]
+            if int(c.fa[t]) < len(feature_names)
+            else f"t{int(c.fa[t]) - len(feature_names)}"
+        )
+        b = (
+            feature_names[int(c.fb[t])]
+            if int(c.fb[t]) < len(feature_names)
+            else f"t{int(c.fb[t]) - len(feature_names)}"
+        )
         z = f"{float(c.p0[t]):.5g}*{a}+{float(c.p1[t]):.5g}"
         op = int(c.op[t])
         if op == 0:
@@ -110,5 +141,11 @@ def _formula_text(c: Candidate, feature_names):
             expr = f"sqrt(abs({z}))"
         else:
             expr = f"exp(clamp({z},-6,6))"
-        parts.append(f"{float(c.coef[t]):.5g}*{expr}")
-    return f"{float(c.bias):.5g} + " + " + ".join(parts)
+        expressions.append(expr)
+        parts.append(f"{float(c.coef[t]):.5g}*" + (f"t{t}" if hierarchical else expr))
+    result = f"{float(c.bias):.5g} + " + " + ".join(parts)
+    return (
+        "; ".join(f"t{i} = {v}" for i, v in enumerate(expressions)) + "; " + result
+        if hierarchical
+        else result
+    )

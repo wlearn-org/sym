@@ -67,7 +67,10 @@ def test_regressor_bundle_path_registry_and_polygrad(tmp_path):
         assert "x" in model.formula(format="text")
         frontier = model.frontier()
         assert frontier
-        assert all(frontier[i]["objective"] >= frontier[i - 1]["objective"] - 1e-12 for i in range(1, len(frontier)))
+        assert all(
+            frontier[i]["objective"] >= frontier[i - 1]["objective"] - 1e-12
+            for i in range(1, len(frontier))
+        )
 
         bundle = model.save()
         loaded = SymbolicRegressor.load(bundle)
@@ -80,7 +83,9 @@ def test_regressor_bundle_path_registry_and_polygrad(tmp_path):
         assert model.save(path) == path.read_bytes()
         loaded_path = SymbolicRegressor.load(Path(path))
         try:
-            np.testing.assert_allclose(loaded_path.predict(X), model.predict(X), atol=1e-12)
+            np.testing.assert_allclose(
+                loaded_path.predict(X), model.predict(X), atol=1e-12
+            )
         finally:
             loaded_path.dispose()
 
@@ -147,16 +152,19 @@ def test_pg_family_regressor_bundle_and_registry(tmp_path):
         model.dispose()
 
 
-def test_pg_family_operator_sets_and_stacked_summaries_persist():
+def test_pg_family_operator_sets_and_batched_polish_persist():
     X, y = make_regression(36)
     try:
-        model = SymbolicRegressor({
-            **PG_SMALL,
-            "operators": ["add", "sub", "mul"],
-            "stackSummaries": True,
-            "generations": 2,
-            "seed": 20260707,
-        }).fit(X, y)
+        model = SymbolicRegressor(
+            {
+                **PG_SMALL,
+                "operators": ["add", "sub", "mul"],
+                "polishBatchSize": 12,
+                "polishPasses": 1,
+                "generations": 2,
+                "seed": 20260707,
+            }
+        ).fit(X, y)
     except ModuleNotFoundError as exc:
         if exc.name != "polygrad":
             raise
@@ -164,14 +172,12 @@ def test_pg_family_operator_sets_and_stacked_summaries_persist():
     try:
         formula = model.formula()
         assert all(term["op"] in {"add", "sub", "mul"} for term in formula["terms"])
-        timings = model._family_engine.stats["timings"]
-        assert timings[0]["fitCount"] == PG_SMALL["population"]
-        assert any(item["fitCount"] < PG_SMALL["population"] for item in timings)
+        # Exact elite evaluation counts are checked by test_family_search.c.
         loaded = SymbolicRegressor.load(model.save())
         try:
             params = loaded.get_params()
             assert params["operators"] == ["add", "sub", "mul"]
-            assert params["stackSummaries"] is True
+            assert params["polishBatchSize"] == 12
             assert "_opIds" not in params
         finally:
             loaded.dispose()
@@ -189,13 +195,15 @@ def test_pg_family_accepts_caller_owned_polygrad_runtime():
         return
     pg = polygrad.create(device="cpu")
     try:
-        model = SymbolicRegressor({
-            **PG_SMALL,
-            "population": 12,
-            "generations": 1,
-            "seed": 20260708,
-            "polygrad": pg,
-        }).fit(X, y)
+        model = SymbolicRegressor(
+            {
+                **PG_SMALL,
+                "population": 12,
+                "generations": 1,
+                "seed": 20260708,
+                "polygrad": pg,
+            }
+        ).fit(X, y)
         try:
             pred = model.predict(X)
             assert pred.shape == (X.shape[0],)
@@ -306,7 +314,12 @@ def test_default_search_spaces_expose_advanced_search_controls():
     common_expected = {
         "population": {"type": "int_uniform", "low": 128, "high": 1024},
         "generations": {"type": "int_uniform", "low": 80, "high": 400},
-        "maxNodes": {"type": "int_uniform", "low": 7, "high": 63, "condition": {"strategy": "tree"}},
+        "maxNodes": {
+            "type": "int_uniform",
+            "low": 7,
+            "high": 63,
+            "condition": {"strategy": "tree"},
+        },
         "operatorSet": {"type": "categorical", "values": ["full", "smooth", "basic"]},
         "complexityPenalty": {"type": "log_uniform", "low": 1e-5, "high": 1e-2},
         "islands": [1, 2, 4],
@@ -353,9 +366,13 @@ def test_regressor_polygrad_refinement_commits_improving_constants():
     model = SymbolicRegressor({**SMALL, "seed": 123}).fit(X, y)
     try:
         formula = model.formula()
-        const_index = next((i for i, node in enumerate(formula["nodes"]) if node["op"] == "const"), -1)
+        const_index = next(
+            (i for i, node in enumerate(formula["nodes"]) if node["op"] == "const"), -1
+        )
         assert const_index >= 0
-        model._set_formula_constant(0, const_index, formula["nodes"][const_index]["value"] + 1)
+        model._set_formula_constant(
+            0, const_index, formula["nodes"][const_index]["value"] + 1
+        )
         damaged_score = model.score(X, y)
         try:
             report = model.refine_polygrad(X, y, epochs=40, lr=0.01)
@@ -417,13 +434,26 @@ def test_verifier_affine_monotonicity():
     formula = {
         "nodes": [
             {"op": "var", "opId": 1, "left": -1, "right": -1, "feature": 0, "value": 0},
-            {"op": "const", "opId": 0, "left": -1, "right": -1, "feature": -1, "value": 2},
+            {
+                "op": "const",
+                "opId": 0,
+                "left": -1,
+                "right": -1,
+                "feature": -1,
+                "value": 2,
+            },
             {"op": "mul", "opId": 4, "left": 0, "right": 1, "feature": -1, "value": 0},
         ]
     }
     report = FormulaVerifier.verify(
         formula,
-        {"n_features": 1, "checks": ["domain", {"kind": "monotonicity", "feature": 0, "direction": "increasing"}]},
+        {
+            "n_features": 1,
+            "checks": [
+                "domain",
+                {"kind": "monotonicity", "feature": 0, "direction": "increasing"},
+            ],
+        },
     )
     assert report["status"] == "proved"
 
@@ -432,11 +462,13 @@ def test_polygrad_protected_nodes_and_borrowed_runtime():
     try:
         import polygrad
     except ModuleNotFoundError as exc:
-        if exc.name != 'polygrad':
+        if exc.name != "polygrad":
             raise
         import pytest
-        pytest.skip('optional polygrad is not installed')
+
+        pytest.skip("optional polygrad is not installed")
     from wlearn_sym._polygrad import evaluate_formula_polygrad
+
     pg = polygrad.create(device="cpu")
     formula = {"nodes": [{"op": "const", "value": 40}, {"op": "exp", "left": 0}]}
     try:

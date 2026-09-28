@@ -33,7 +33,8 @@
     "build:browser": "bash scripts/build-browser.sh",
     "prepack": "node scripts/prepack.js",
     "prepublishOnly": "node scripts/prepublish.js",
-    "test:types": "tsc --strict --noEmit --target es2020 --module commonjs --moduleResolution node ../test/types.ts"
+    "test:types": "tsc --strict --noEmit --target es2020 --module commonjs --moduleResolution node ../test/types.ts",
+    "test:polygrad": "node ../test/test_family_backend.js"
   },
   "dependencies": {
     "@wlearn/core": "^0.3.0",

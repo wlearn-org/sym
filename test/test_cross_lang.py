@@ -108,7 +108,12 @@ def _run_node(code, tmp):
     local_pg = Path(__file__).parents[3] / "polygrad" / "polygrad" / "js" / "src"
     if local_pg.exists():
         env.setdefault("WLEARN_SYM_POLYGRAD_JS", str(local_pg))
-    subprocess.run(["node", "-e", code, str(tmp)], cwd=Path(__file__).parents[1], env=env, check=True)
+    subprocess.run(
+        ["node", "-e", code, str(tmp)],
+        cwd=Path(__file__).parents[1],
+        env=env,
+        check=True,
+    )
 
 
 def test_js_python_js_bundle_parity():
@@ -127,7 +132,10 @@ def test_js_python_js_bundle_parity():
             py_model.dispose()
 
         _run_node(JS_LOAD, tmp)
-        js_from_py = np.asarray(json.loads((tmp / "js_from_py.json").read_text(encoding="utf-8"))["pred"], dtype=np.float64)
+        js_from_py = np.asarray(
+            json.loads((tmp / "js_from_py.json").read_text(encoding="utf-8"))["pred"],
+            dtype=np.float64,
+        )
         np.testing.assert_allclose(js_from_py, js_pred, atol=1e-12)
 
 
@@ -146,15 +154,17 @@ def test_pg_family_js_python_bundle_parity():
             py_loaded.dispose()
 
         try:
-            py_model = SymbolicRegressor({
-                "engine": "pg-family",
-                "population": 10,
-                "generations": 1,
-                "terms": 3,
-                "eliteCount": 2,
-                "frontierSize": 3,
-                "seed": 20260706,
-            }).fit(X, np.asarray(side["y"], dtype=np.float64))
+            py_model = SymbolicRegressor(
+                {
+                    "engine": "pg-family",
+                    "population": 10,
+                    "generations": 1,
+                    "terms": 3,
+                    "eliteCount": 2,
+                    "frontierSize": 3,
+                    "seed": 20260706,
+                }
+            ).fit(X, np.asarray(side["y"], dtype=np.float64))
         except ModuleNotFoundError as exc:
             if exc.name == "polygrad":
                 pytest.skip("Python Polygrad unavailable")
@@ -162,12 +172,19 @@ def test_pg_family_js_python_bundle_parity():
         try:
             py_pred = py_model.predict(X)
             py_model.save(tmp / "py-pg.wlrn")
-            (tmp / "py-pg.json").write_text(json.dumps({"X": side["X"], "pred": py_pred.tolist()}), encoding="utf-8")
+            (tmp / "py-pg.json").write_text(
+                json.dumps({"X": side["X"], "pred": py_pred.tolist()}), encoding="utf-8"
+            )
         finally:
             py_model.dispose()
 
         _run_node(JS_LOAD_PG, tmp)
-        js_from_py = np.asarray(json.loads((tmp / "js-from-py-pg.json").read_text(encoding="utf-8"))["pred"], dtype=np.float64)
+        js_from_py = np.asarray(
+            json.loads((tmp / "js-from-py-pg.json").read_text(encoding="utf-8"))[
+                "pred"
+            ],
+            dtype=np.float64,
+        )
         np.testing.assert_allclose(js_from_py, py_pred, atol=1e-5)
 
 
@@ -176,22 +193,43 @@ if __name__ == "__main__":
     print("sym cross-language parity passed")
 
 
-@pytest.mark.parametrize('classes', [0, 2, 3])
-def test_c_family_native_wasm_and_bundle_parity(classes):
+@pytest.mark.parametrize("hierarchical", [False, True])
+@pytest.mark.parametrize("classes", [0, 2, 3])
+def test_c_family_native_wasm_and_bundle_parity(classes, hierarchical):
     from wlearn_sym import SymbolicClassifier
-    params = dict(strategy='family', backend='c', population=24, generations=4,
-                  terms=4, eliteCount=4, islands=3, validationFraction=.2,
-                  operatorSet='full', seed=194)
+
+    params = dict(
+        strategy="family",
+        backend="c",
+        population=24,
+        generations=4,
+        terms=4,
+        eliteCount=4,
+        islands=3,
+        validationFraction=0.2,
+        operatorSet="full",
+        seed=194,
+        hierarchical=hierarchical,
+        polishPasses=2,
+        polishBatchSize=16,
+    )
     X = np.random.default_rng(420).uniform(-2, 2, (60, 3))
     labels = [91, -7, 123][:classes]
-    y = np.asarray(labels)[np.arange(len(X)) % classes] if classes else np.sin(X[:, 0])+X[:, 1]*X[:, 2]
+    y = (
+        np.asarray(labels)[np.arange(len(X)) % classes]
+        if classes
+        else np.sin(X[:, 0]) + X[:, 1] * X[:, 2]
+    )
     if classes:
-        params['classes'] = labels
+        params["classes"] = labels
     Model = SymbolicClassifier if classes else SymbolicRegressor
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        (tmp/'input.json').write_text(json.dumps(dict(X=X.tolist(), y=y.tolist(), params=params, classes=classes)))
-        _run_node(r'''
+        (tmp / "input.json").write_text(
+            json.dumps(dict(X=X.tolist(), y=y.tolist(), params=params, classes=classes))
+        )
+        _run_node(
+            r"""
 const fs = require('node:fs')
 const { SymbolicRegressor, SymbolicClassifier } = require('./js/src')
 ;(async () => {
@@ -205,26 +243,34 @@ const { SymbolicRegressor, SymbolicClassifier } = require('./js/src')
       scores: Array.from(input.classes ? m.predictProba(input.X) : m.predict(input.X))}))
   } finally { m.dispose() }
 })().catch(e => { console.error(e); process.exitCode=1 })
-''', tmp)
-        side = json.loads((tmp/'js.json').read_text())
+""",
+            tmp,
+        )
+        side = json.loads((tmp / "js.json").read_text())
         native = Model(params).fit(X, y)
-        loaded = Model.load(tmp/'js.wlrn')
+        loaded = Model.load(tmp / "js.wlrn")
         try:
             for m in (native, loaded):
-                np.testing.assert_allclose(m.predict(X), side['pred'], rtol=1e-6, atol=1e-6)
+                np.testing.assert_allclose(
+                    m.predict(X), side["pred"], rtol=1e-6, atol=1e-6
+                )
                 scores = m.predict_proba(X) if classes else m.predict(X)
-                np.testing.assert_allclose(scores.reshape(-1), side['scores'], rtol=1e-6, atol=1e-6)
-            native.save(tmp/'native.wlrn')
-            loaded.save(tmp/'roundtrip.wlrn')
+                np.testing.assert_allclose(
+                    scores.reshape(-1), side["scores"], rtol=1e-6, atol=1e-6
+                )
+            native.save(tmp / "native.wlrn")
+            loaded.save(tmp / "roundtrip.wlrn")
             from wlearn.bundle import decode_bundle
-            original = decode_bundle(tmp/'js.wlrn')
-            roundtrip = decode_bundle(tmp/'roundtrip.wlrn')
+
+            original = decode_bundle(tmp / "js.wlrn")
+            roundtrip = decode_bundle(tmp / "roundtrip.wlrn")
             assert original[0] == roundtrip[0]
             assert original[2] == roundtrip[2]
         finally:
             native.dispose()
             loaded.dispose()
-        _run_node(r'''
+        _run_node(
+            r"""
 const fs = require('node:fs'), assert = require('node:assert/strict')
 const { SymbolicRegressor, SymbolicClassifier } = require('./js/src')
 ;(async () => {
@@ -239,4 +285,6 @@ const { SymbolicRegressor, SymbolicClassifier } = require('./js/src')
     } finally { m.dispose() }
   }
 })().catch(e => { console.error(e); process.exitCode=1 })
-''', tmp)
+""",
+            tmp,
+        )

@@ -3,15 +3,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define CHECK(c)                                                                               \
-    do {                                                                                       \
-        if (!(c)) {                                                                            \
-            fprintf(stderr, "line %d: %s (%s)\n", __LINE__, #c, sym_get_error());              \
-            exit(1);                                                                           \
-        }                                                                                      \
+#define CHECK(c)                                                                                   \
+    do {                                                                                           \
+        if (!(c)) {                                                                                \
+            fprintf(stderr, "line %d: %s (%s)\n", __LINE__, #c, sym_get_error());                  \
+            exit(1);                                                                               \
+        }                                                                                          \
     } while (0)
-static double reference_term(const double *d, const double *row) {
-    double a = row[(int)d[0]], b = row[(int)d[1]], z = a * d[3] + d[4];
+static double reference_term(const double *d, const double *row, const double *prior, int cols) {
+    double a = d[0] < cols ? row[(int)d[0]] : prior[(int)d[0] - cols];
+    double b = d[1] < cols ? row[(int)d[1]] : prior[(int)d[1] - cols];
+    double z = a * d[3] + d[4];
     switch ((int)d[2]) {
     case 0:
         return a + b;
@@ -53,9 +55,10 @@ static char *drive(const double *X, const double *y, int train_rows, int classes
         for (int c = 0; c < batch->candidates; c++)
             for (int r = 0; r < batch->rows; r++)
                 for (int t = 0; t < batch->terms; t++) {
-                    double expected =
-                        reference_term(batch->descriptors + ((size_t)c * batch->terms + t) * 5,
-                                       batch->X + (size_t)r * batch->cols);
+                    double expected = reference_term(
+                        batch->descriptors + ((size_t)c * batch->terms + t) * 5,
+                        batch->X + (size_t)r * batch->cols,
+                        features + ((size_t)c * batch->rows + r) * batch->terms, batch->cols);
                     size_t at = ((size_t)c * batch->rows + r) * batch->terms + t;
                     CHECK(features[at] == expected);
                     features[at] = expected; /* External evaluator supplies these features. */
@@ -140,8 +143,10 @@ int main(void) {
             continue;
         for (int i = 0; i < 60; i++)
             y[i] = classes ? i % classes : 2 * X[3 * i] + .3 * X[3 * i + 1] + 1;
-        for (int polish = 0; polish <= 1; polish++) {
+        for (int polish = 0; polish <= 3; polish++) {
             p.polish = polish;
+            p.polish_batch = polish >= 2 ? 32 : 0;
+            p.hierarchical = polish == 3;
             sym_family_model_t *m = sym_family_fit(X, 60, 3, y, classes > 0, classes, &p);
             CHECK(m);
             char *baseline;
@@ -161,6 +166,25 @@ int main(void) {
             CHECK(sym_family_save(loaded, &again, &n) == 0);
             CHECK(n == length && memcmp(again, baseline, n) == 0);
             CHECK(sym_family_load(baseline, length - 1) == NULL);
+            /* First selected term cannot reference itself, even in semantics3. */
+            char source[8];
+            memcpy(source, baseline + 48, 8);
+            const unsigned char self[8] = {0, 0, 0, 0, 0, 0, 8, 64}; /* double 3 */
+            memcpy(baseline + 48, self, 8);
+            CHECK(sym_family_load(baseline, length) == NULL);
+            memcpy(baseline + 48, source, 8);
+            if (p.hierarchical) {
+                char old_cols[4];
+                memcpy(old_cols, baseline + 16, 4);
+                const unsigned char huge[4] = {255, 255, 255, 127};
+                memcpy(baseline + 16, huge, 4);
+                sym_family_model_t *invalid = sym_family_load(baseline, length);
+                if (invalid)
+                    sym_family_free(invalid);
+                CHECK(!invalid);
+                memcpy(baseline + 16, old_cols, 4);
+            }
+
             for (int at = 4; at <= 44; at += 4) {
                 char old[4];
                 memcpy(old, baseline + at, 4);
@@ -174,6 +198,26 @@ int main(void) {
             sym_family_free(m);
         }
     }
+    /* Invalid compact results are atomic, just like invalid feature tiles. */
+    sym_family_search_t *reduced = sym_family_search_new(X, 60, 3, y, 0, 0, &p, 4, 17);
+    CHECK(reduced);
+    const sym_family_batch_t *pending;
+    CHECK(sym_family_search_propose(reduced, &pending) == 1);
+    uint32_t id = pending->id;
+    double results[4 * (SYM_FAMILY_MAX_TERMS + 3)] = {0};
+    int count = pending->candidates * (p.terms + 3);
+    results[count - 1] = NAN;
+    CHECK(sym_family_search_accept_results(reduced, id, results, count) == -1);
+    CHECK(sym_family_search_pending(reduced)->id == id);
+    results[count - 1] = -1;
+    CHECK(sym_family_search_accept_results(reduced, id, results, count) == -1);
+    results[count - 1] = 0;
+    results[0] = 1.00000000001;
+    CHECK(sym_family_search_accept_results(reduced, id, results, count) == -1);
+    results[0] = 0;
+    CHECK(sym_family_search_accept_results(reduced, id, results, count) == 0);
+    CHECK(sym_family_search_accept_results(reduced, id, results, count) == -1);
+    sym_family_search_free(reduced);
     for (int i = 0; i < 20; i++) {
         sym_family_search_t *s = sym_family_search_new(X, 60, 3, y, 0, 0, &p, 1, 1);
         CHECK(s);
@@ -182,8 +226,7 @@ int main(void) {
         sym_family_search_free(s);
     }
     cache_boundaries();
-    puts(
-        "family step: 18 external-evaluator runs, QR tile parity, atomic accept, polish, elite "
-        "cache, cancellation, SYM2 and 6 cache-boundary cases passed");
+    puts("family step: 36 external-evaluator runs, QR tile parity, atomic accept, polish, elite "
+         "cache, cancellation, SYM2 and 6 cache-boundary cases passed");
     return 0;
 }

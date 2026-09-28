@@ -45,6 +45,53 @@ def _declare(lib):
         fn = getattr(lib, name)
         fn.argtypes = [ctypes.c_void_p, ctypes.c_uint32, _DP, _I]
         fn.restype = _I
+    lib.sym_family_search_data.argtypes = [ctypes.c_void_p, _DP, _I]
+    lib.sym_family_search_data.restype = _I
+    lib.sym_family_search_solve.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        _DP,
+        _I,
+        _DP,
+        _I,
+        _I,
+        _DP,
+        _I,
+    ]
+    lib.sym_family_search_solve.restype = _I
+    lib.sym_family_search_accept_results.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        _DP,
+        _I,
+    ]
+    lib.sym_family_search_accept_results.restype = _I
+    lib.sym_family_refine_data.argtypes = [
+        ctypes.c_void_p,
+        _I,
+        _DP,
+        _I,
+        _D,
+        ctypes.c_uint32,
+        _DP,
+        _I,
+    ]
+    lib.sym_family_refine_data.restype = _I
+    lib.sym_family_refine_accept.argtypes = [
+        ctypes.c_void_p,
+        _I,
+        _DP,
+        _I,
+        _DP,
+        _I,
+        _I,
+        _DP,
+        _D,
+        ctypes.c_uint32,
+        _D,
+        _DP,
+    ]
+    lib.sym_family_refine_accept.restype = _I
     lib.sym_family_search_finish.argtypes = [ctypes.c_void_p]
     lib.sym_family_search_finish.restype = ctypes.c_void_p
     lib.sym_family_search_free.argtypes = [ctypes.c_void_p]

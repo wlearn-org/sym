@@ -11,11 +11,7 @@ from wlearn.registry import register
 from ._family_c import CFamilyEngine
 from ._strategy import resolve_strategy, family_search_space
 from ._ffi import _DP, _I, get_lib, last_error
-from ._pg_family import (
-    PG_FAMILY_MEDIA,
-    PgFamilyClassifierEngine,
-    PgFamilyRegressorEngine,
-)
+from ._family_format import PG_FAMILY_MEDIA
 
 FAMILY_MEDIA = "application/vnd.wlearn.sym.family"
 from ._polygrad import evaluate_formula_polygrad, refine_formula_polygrad
@@ -110,7 +106,10 @@ class _BaseSym:
         self._n_classes = 0
         self._classes = []
         self._choice = resolve_strategy(self._params, self.task_name)
-        self._engine_name = ENGINE_PG_FAMILY if self._choice[2] else ENGINE_C
+        self._params.update(strategy=self._choice[0], backend=self._choice[1])
+        self._engine_name = (
+            ENGINE_PG_FAMILY if self._choice[1] == "polygrad" else ENGINE_C
+        )
         self._family_engine = None
 
     @classmethod
@@ -122,7 +121,7 @@ class _BaseSym:
             raise RuntimeError(f"{self.__class__.__name__} has been disposed")
         X = _as_matrix(X)
         y = _as_y(y, X.shape[0])
-        if self._choice[0] == "family" and not self._choice[2]:
+        if self._choice[0] == "family":
             classes = (
                 list(self._params.get("classes", _unique_sorted(y)))
                 if self.task_name == "classification"
@@ -149,8 +148,6 @@ class _BaseSym:
             self._fitted = True
             return self
         self._free_handle()
-        if self._engine_name == ENGINE_PG_FAMILY:
-            return self._fit_pg_family(X, y)
         lib = get_lib()
         fit_y = y
         n_classes = 0
@@ -290,30 +287,6 @@ class _BaseSym:
         self._n_classes = int(lib.wl_sym_get_n_classes(handle))
         return self
 
-    def _fit_pg_family(self, X, y):
-        if self.task_name == "transformer":
-            raise ValueError(
-                'engine="pg-family" supports SymbolicRegressor and SymbolicClassifier; use engine="c" for FormulaTransformer'
-            )
-        params = dict(self._params)
-        if self.task_name == "classification":
-            self._classes = list(params.get("classes") or _unique_sorted(y))
-            if len(self._classes) < 2:
-                raise ValueError("classification requires at least two classes")
-            params["classes"] = self._classes
-            engine = PgFamilyClassifierEngine(params).fit(X, y)
-            self._n_classes = len(self._classes)
-            self._n_outputs = 1 if self._n_classes == 2 else self._n_classes
-        else:
-            engine = PgFamilyRegressorEngine(params).fit(X, y)
-            self._classes = []
-            self._n_classes = 0
-            self._n_outputs = 1
-        self._family_engine = engine
-        self._fitted = True
-        self._n_features = int(X.shape[1])
-        return self
-
     def predict(self, X):
         self._ensure_fitted()
         if self._family_engine is not None:
@@ -418,10 +391,8 @@ class _BaseSym:
 
     def predict_polygrad(self, X, polygrad=None):
         self._ensure_fitted()
-        if self._choice[0] == "family" and not self._choice[2]:
-            raise ValueError(
-                "Polygrad execution for C family models is not implemented yet"
-            )
+        if self._choice[0] == "family":
+            return self._family_engine.predict_polygrad(X, polygrad)
         if self._family_engine is not None:
             return self._family_engine.predict(X)
         X = _as_matrix(X, self._n_features)
@@ -452,12 +423,17 @@ class _BaseSym:
         polygrad=None,
     ):
         self._ensure_fitted()
-        if self._family_engine is not None:
-            return {
-                "status": "unsupported",
-                "reason": "post-fit Polygrad refinement is available for tree formulas only; family models retain their fitted readout",
-                "committed": False,
-            }
+        if isinstance(self._family_engine, CFamilyEngine):
+            return self._family_engine.refine_polygrad(
+                X,
+                y,
+                index=index,
+                epochs=epochs,
+                lr=lr,
+                optimizer=optimizer,
+                tolerance=tolerance,
+                polygrad=polygrad,
+            )
         if self.task_name != "regression":
             raise ValueError(
                 "refine_polygrad currently supports regression formulas only"
@@ -526,7 +502,7 @@ class _BaseSym:
     def save(self, path=None):
         self._ensure_fitted()
         if self._family_engine is not None:
-            binary = getattr(self._family_engine, "artifact_version", 1) == 2
+            binary = getattr(self._family_engine, "artifact_version", 1) >= 2
             data = (
                 self._family_engine.to_bytes()
                 if binary
@@ -538,12 +514,13 @@ class _BaseSym:
             )
             bundle = encode_bundle(
                 {
-                    "typeId": self.type_id.replace("@1", "@2")
+                    "typeId": self.type_id.replace(
+                        "@1", f"@{self._family_engine.artifact_version}"
+                    )
                     if binary
                     else self.type_id,
                     "params": self.get_params(),
                     "metadata": {
-                        **({"engine": ENGINE_PG_FAMILY} if self._choice[2] else {}),
                         "strategy": "family",
                         "backend": self._choice[1],
                         "nFeatures": self._n_features,
@@ -593,7 +570,8 @@ class _BaseSym:
     @classmethod
     def _from_bundle(cls, manifest, toc, blobs):
         binary = (
-            manifest.get("typeId") == cls.type_id.replace("@1", "@2")
+            manifest.get("typeId")
+            in [cls.type_id.replace("@1", f"@{v}") for v in (2, 3)]
             and cls.task_name != "transformer"
         )
         if manifest.get("typeId") != cls.type_id and not binary:
@@ -618,6 +596,10 @@ class _BaseSym:
                 ) != bool(classes):
                     raise ValueError("family payload task mismatch")
                 obj._family_engine = CFamilyEngine.from_bytes(raw, obj._params, classes)
+                if not manifest["typeId"].endswith(
+                    f"@{obj._family_engine.artifact_version}"
+                ):
+                    raise ValueError("family artifact semantics/typeId mismatch")
                 obj._n_features = obj._family_engine.n_features
                 obj._classes = list(classes)
                 obj._n_classes = len(classes)
@@ -634,7 +616,7 @@ class _BaseSym:
                 obj.dispose()
                 raise
         if entry.get("mediaType") == FAMILY_MEDIA:
-            raise ValueError("family binary requires an @2 typeId")
+            raise ValueError("family binary requires an @2 or @3 typeId")
         if (
             entry.get("mediaType") == PG_FAMILY_MEDIA
             or metadata.get("engine") == ENGINE_PG_FAMILY
@@ -645,41 +627,27 @@ class _BaseSym:
                 )
             state = json.loads(raw.decode("utf-8"))
             params = manifest.get("params") or {}
-            if params.get("strategy") == "family" and params.get("backend") == "c":
-                expected = (
-                    "classifier" if cls.task_name == "classification" else "regressor"
-                )
-                if (
-                    not isinstance(state, dict)
-                    or state.get("kind") != f"wlearn.sym.pg-family.{expected}@1"
-                ):
-                    raise ValueError("family payload task does not match bundle type")
-                obj = cls(params)
-                obj._family_engine = CFamilyEngine.from_state(state, params)
-                obj._fitted = True
-                obj._n_features = obj._family_engine.n_features
-                obj._classes = obj._family_engine.classes
-                obj._n_classes = len(obj._classes)
-                obj._n_outputs = obj._n_classes if obj._n_classes > 2 else 1
-                return obj
-            obj = cls({**params, "engine": ENGINE_PG_FAMILY})
-            obj._engine_name = ENGINE_PG_FAMILY
-            if cls.task_name == "classification":
-                obj._family_engine = PgFamilyClassifierEngine.from_state(state)
-            else:
-                obj._family_engine = PgFamilyRegressorEngine.from_state(state)
+            expected = (
+                "classifier" if cls.task_name == "classification" else "regressor"
+            )
+            if (
+                not isinstance(state, dict)
+                or state.get("kind") != f"wlearn.sym.pg-family.{expected}@1"
+            ):
+                raise ValueError("family payload task does not match bundle type")
+            params = {
+                **params,
+                "strategy": "family",
+                "backend": params.get("backend", "polygrad"),
+            }
+            params.pop("engine", None)
+            obj = cls(params)
+            obj._family_engine = CFamilyEngine.from_state(state, params)
             obj._fitted = True
-            obj._n_features = int(
-                metadata.get("nFeatures")
-                or getattr(obj._family_engine, "n_features", 0)
-            )
-            obj._n_outputs = int(
-                metadata.get("nOutputs") or (1 if cls.task_name == "regression" else 0)
-            )
-            obj._n_classes = int(metadata.get("nClasses") or 0)
-            obj._classes = list(
-                metadata.get("classes") or getattr(obj._family_engine, "classes", [])
-            )
+            obj._n_features = obj._family_engine.n_features
+            obj._classes = obj._family_engine.classes
+            obj._n_classes = len(obj._classes)
+            obj._n_outputs = obj._n_classes if obj._n_classes > 2 else 1
             return obj
         return cls._load_raw(
             raw, manifest.get("params") or {}, manifest.get("metadata") or {}
@@ -768,7 +736,7 @@ class _BaseSym:
         if choice != self._choice:
             self._free_handle()
         self._params, self._choice = merged, choice
-        self._engine_name = ENGINE_PG_FAMILY if choice[2] else ENGINE_C
+        self._engine_name = ENGINE_PG_FAMILY if choice[1] == "polygrad" else ENGINE_C
         return self
 
     @property
@@ -784,11 +752,10 @@ class _BaseSym:
             "strategies": ["tree"]
             if self.task_name == "transformer"
             else ["tree", "family"],
-            "backends": ["c"],
+            "backends": ["c", "polygrad"] if family else ["c"],
             "activeStrategy": self._choice[0],
             "activeBackend": self._choice[1],
-            "legacySearch": self._choice[2],
-            "polygradRefinement": self.task_name == "regression" and not family,
+            "polygradRefinement": (family or self.task_name == "regression"),
         }
 
     getParams = get_params
@@ -960,6 +927,8 @@ class FormulaTransformer(_BaseSym):
 
 
 def register_sym_loaders():
+    register(TYPE_ID_REGRESSOR.replace("@1", "@3"), SymbolicRegressor._from_bundle)
+    register(TYPE_ID_CLASSIFIER.replace("@1", "@3"), SymbolicClassifier._from_bundle)
     register(TYPE_ID_REGRESSOR.replace("@1", "@2"), SymbolicRegressor._from_bundle)
     register(TYPE_ID_CLASSIFIER.replace("@1", "@2"), SymbolicClassifier._from_bundle)
     register(TYPE_ID_REGRESSOR, SymbolicRegressor._from_bundle)

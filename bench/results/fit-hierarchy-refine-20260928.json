@@ -1,0 +1,159 @@
+{
+  "environment": {
+    "python": "3.11.12",
+    "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.35"
+  },
+  "settings": {
+    "rows": 512,
+    "population": 64,
+    "generations": 10,
+    "terms": 4,
+    "seeds": "11,23,37",
+    "device": "CUDA",
+    "hierarchical": true,
+    "polish": 2,
+    "refine": 20,
+    "output": "../temp/runs/20260928-sym-completion/fit-hierarchy-refine.json"
+  },
+  "timing": "Complete fit, fresh estimator/runtime; includes device setup and compilation; no prewarm.",
+  "results": [
+    {
+      "dataset": "smooth",
+      "seed": 11,
+      "backend": "c",
+      "fit_ms": 37.779539001348894,
+      "test_r2": 0.9786319139858441,
+      "bytes": 4874,
+      "refine_ms": 3311.400827005855,
+      "refined_test_r2": 0.9786319139858441,
+      "committed": false
+    },
+    {
+      "dataset": "smooth",
+      "seed": 11,
+      "backend": "polygrad",
+      "fit_ms": 2858.358038996812,
+      "test_r2": 0.9786319139858441,
+      "bytes": 4888,
+      "refine_ms": 1080.4411000062828,
+      "refined_test_r2": 0.9786319139858441,
+      "committed": false,
+      "max_prediction_delta_from_c": 0.0
+    },
+    {
+      "dataset": "smooth",
+      "seed": 23,
+      "backend": "c",
+      "fit_ms": 39.080377006030176,
+      "test_r2": 0.9725991880245533,
+      "bytes": 4874,
+      "refine_ms": 1198.7417540003662,
+      "refined_test_r2": 0.9730194907314111,
+      "committed": true
+    },
+    {
+      "dataset": "smooth",
+      "seed": 23,
+      "backend": "polygrad",
+      "fit_ms": 2841.38640799938,
+      "test_r2": 0.9725991880245533,
+      "bytes": 4888,
+      "refine_ms": 1038.2349400024395,
+      "refined_test_r2": 0.9730194907314111,
+      "committed": true,
+      "max_prediction_delta_from_c": 0.0
+    },
+    {
+      "dataset": "smooth",
+      "seed": 37,
+      "backend": "c",
+      "fit_ms": 36.96607199526625,
+      "test_r2": 0.9789997400417136,
+      "bytes": 4874,
+      "refine_ms": 900.2563530011685,
+      "refined_test_r2": 0.9789997400417136,
+      "committed": false
+    },
+    {
+      "dataset": "smooth",
+      "seed": 37,
+      "backend": "polygrad",
+      "fit_ms": 2891.869350001798,
+      "test_r2": 0.9789997400417136,
+      "bytes": 4888,
+      "refine_ms": 867.5355859959382,
+      "refined_test_r2": 0.9789997400417136,
+      "committed": false,
+      "max_prediction_delta_from_c": 0.0
+    },
+    {
+      "dataset": "friedman1",
+      "seed": 11,
+      "backend": "c",
+      "fit_ms": 35.23616299935384,
+      "test_r2": 0.7933198917485732,
+      "bytes": 4874,
+      "refine_ms": 1062.367375001486,
+      "refined_test_r2": 0.7933198917485732,
+      "committed": false
+    },
+    {
+      "dataset": "friedman1",
+      "seed": 11,
+      "backend": "polygrad",
+      "fit_ms": 2934.929798000667,
+      "test_r2": 0.7933198917485732,
+      "bytes": 4888,
+      "refine_ms": 990.6727410052554,
+      "refined_test_r2": 0.7933198917485732,
+      "committed": false,
+      "max_prediction_delta_from_c": 0.0
+    },
+    {
+      "dataset": "friedman1",
+      "seed": 23,
+      "backend": "c",
+      "fit_ms": 36.016186997585464,
+      "test_r2": 0.73751998855954,
+      "bytes": 4874,
+      "refine_ms": 1287.2156689991243,
+      "refined_test_r2": 0.73751998855954,
+      "committed": false
+    },
+    {
+      "dataset": "friedman1",
+      "seed": 23,
+      "backend": "polygrad",
+      "fit_ms": 2986.7927899977076,
+      "test_r2": 0.73751998855954,
+      "bytes": 4888,
+      "refine_ms": 1102.8470230012317,
+      "refined_test_r2": 0.73751998855954,
+      "committed": false,
+      "max_prediction_delta_from_c": 0.0
+    },
+    {
+      "dataset": "friedman1",
+      "seed": 37,
+      "backend": "c",
+      "fit_ms": 36.04265699686948,
+      "test_r2": 0.7647371827109143,
+      "bytes": 4874,
+      "refine_ms": 1080.5909979972057,
+      "refined_test_r2": 0.7647371827109143,
+      "committed": false
+    },
+    {
+      "dataset": "friedman1",
+      "seed": 37,
+      "backend": "polygrad",
+      "fit_ms": 2980.059927002003,
+      "test_r2": 0.7647371827109143,
+      "bytes": 4888,
+      "refine_ms": 1001.9681030025822,
+      "refined_test_r2": 0.7647371827109143,
+      "committed": false,
+      "max_prediction_delta_from_c": 0.0
+    }
+  ]
+}

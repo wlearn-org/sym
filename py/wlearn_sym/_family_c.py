@@ -20,6 +20,10 @@ def _config(p):
             "family currently supports the MSE readout, including classification margins"
         )
     for k in (
+        "stackSummaries",
+        "evalCacheSize",
+        "tensorDevice",
+        "ownPolygradRuntime",
         "maxNodes",
         "max_nodes",
         "maxDepth",
@@ -34,7 +38,6 @@ def _config(p):
         "complexity_hof_size",
         "finalSelector",
         "final_selector",
-        "hierarchical",
         "migrationInterval",
         "migration_interval",
         "migrationCount",
@@ -48,8 +51,6 @@ def _config(p):
         "jit",
         "gatherMode",
         "gather_mode",
-        "polygradRuntime",
-        "polygrad",
         "tournamentSize",
         "tournament_size",
         "constantRate",
@@ -69,6 +70,8 @@ def _config(p):
     ):
         if p.get(k) is not None:
             raise ValueError(f"{k} is not supported by C family search")
+    if "hierarchical" in p and not isinstance(p["hierarchical"], bool):
+        raise ValueError("hierarchical must be boolean")
     mask = sum(1 << op for op in resolve_operator_ids(p))
     values = [
         p.get("population", 128),
@@ -88,6 +91,8 @@ def _config(p):
         get("crossoverRate", "crossover_rate", 0.55),
         p.get("ridge", 1e-8),
         p.get("tol", 1e-12),
+        get("polishBatchSize", "polish_batch_size", 0),
+        int(p.get("hierarchical", False)),
     ]
     if any(
         isinstance(v, (bool, str)) or not isinstance(v, (int, float, np.number))
@@ -103,7 +108,7 @@ def _matrix(X, cols):
     X = np.ascontiguousarray(X, dtype=np.float64)
     if X.ndim == 1:
         X = X.reshape(-1, cols)
-    if X.ndim != 2 or X.shape[1] != cols:
+    if X.ndim != 2 or X.shape[1] != cols or not np.isfinite(X).all():
         raise ValueError("family matrix shape mismatch")
     return X
 
@@ -137,6 +142,221 @@ class CFamilyEngine:
         self.n_features = self.terms = 0
         self.artifact_version = 1
 
+    def predict_polygrad(self, X, polygrad=None):
+        from ._family_refine import predict
+
+        X = _matrix(X, self.n_features)
+        heads = len(self.classes) if len(self.classes) > 2 else 1
+        values = [
+            predict(
+                self._candidate(h, -1),
+                X,
+                polygrad
+                or self.params.get("polygradRuntime")
+                or self.params.get("polygrad"),
+            )
+            for h in range(heads)
+        ]
+        if not self.classes:
+            return values[0]
+        indices = (
+            np.argmax(np.column_stack(values), axis=1)
+            if heads > 1
+            else (values[0] >= 0).astype(int)
+        )
+        return np.asarray(self.classes)[indices]
+
+    def refine_polygrad(
+        self,
+        X,
+        y,
+        *,
+        index=0,
+        epochs=80,
+        lr=0.001,
+        optimizer="adam",
+        tolerance=1e-10,
+        polygrad=None,
+    ):
+        from ._family_refine import refine
+
+        heads = len(self.classes) if len(self.classes) > 2 else 1
+        if type(index) is not int or not 0 <= index < heads:
+            raise ValueError("invalid family head index")
+        X = _matrix(X, self.n_features)
+        y = np.asarray(y, dtype=np.float64)
+        if y.ndim != 1 or len(y) != len(X):
+            raise ValueError("family target length mismatch")
+        if self.classes:
+            mapping = {v: i for i, v in enumerate(self.classes)}
+            y = np.array([mapping[v] for v in y], dtype=np.float64)
+        y = np.ascontiguousarray(y)
+        lib = get_lib()
+        fraction = self.params.get(
+            "validationFraction", self.params.get("validation_fraction", 0)
+        )
+        seed = self.params.get("seed", 42)
+        data = np.empty(2 * len(X) + 1)
+
+        def ptr(a):
+            return a.ctypes.data_as(_DP)
+
+        if lib.sym_family_refine_data(
+            self.handle, index, ptr(y), len(X), fraction, seed, ptr(data), data.size
+        ):
+            raise ValueError(last_error(lib))
+        training = data[len(X) : 2 * len(X)].astype(bool)
+        candidate = self._candidate(index, -1)
+        updates, history = refine(
+            candidate,
+            X[training],
+            data[: len(X)][training],
+            epochs=epochs,
+            lr=lr,
+            optimizer=optimizer,
+            ridge=self.params.get("ridge", 1e-8),
+            polygrad=polygrad
+            or self.params.get("polygradRuntime")
+            or self.params.get("polygrad"),
+        )
+        report = np.empty(6)
+        rc = lib.sym_family_refine_accept(
+            self.handle,
+            index,
+            ptr(updates),
+            updates.size,
+            ptr(X),
+            len(X),
+            X.shape[1],
+            ptr(y),
+            fraction,
+            seed,
+            tolerance,
+            ptr(report),
+        )
+        if rc < 0:
+            raise ValueError(last_error(lib))
+        return dict(
+            status="ok",
+            committed=bool(rc),
+            history=history,
+            head=index,
+            beforeLoss=report[0],
+            beforeValidLoss=report[1],
+            beforeObjective=report[2],
+            afterLoss=report[3],
+            afterValidLoss=report[4],
+            afterObjective=report[5],
+        )
+
+    def _fit_polygrad(self, xp, rows, cols, yp, task, classes, config, count):
+        from ._family_scorer import FamilyScorer
+
+        lib = get_lib()
+        capacity = self.params.get("batchSize", self.params.get("batch_size", 64))
+        if type(capacity) is not int or not 1 <= capacity <= 512:
+            raise ValueError("family batchSize must be an integer in [1,512]")
+        search = lib.wl_sym_family_search_new(
+            xp, rows, cols, yp, task, classes, config, count, capacity, min(rows, 4096)
+        )
+        if not search:
+            raise ValueError(last_error(lib))
+        terms = int(config[2])
+        X = np.ctypeslib.as_array(xp, shape=(rows * cols,)).reshape(rows, cols).copy()
+        descriptors = np.empty((capacity, terms, 5))
+        shape = np.empty(8, dtype=np.int32)
+        data = np.empty(2 * rows + 1)
+        scorer = None
+        head = -1
+        actual = identity = 0
+
+        def ptr(a):
+            return a.ctypes.data_as(_DP)
+
+        def solve(factors, stats):
+            factors = np.ascontiguousarray(factors[:actual], dtype=np.float64)
+            stats = np.ascontiguousarray(stats[:actual], dtype=np.float64)
+            output = np.empty((actual, terms + 1))
+            if lib.sym_family_search_solve(
+                search,
+                identity,
+                ptr(factors),
+                factors.size,
+                ptr(stats),
+                stats.size,
+                factors.shape[-1],
+                ptr(output),
+                output.size,
+            ):
+                raise ValueError(last_error(lib))
+            # Padding never creates additional candidates or consumes RNG.
+            return np.concatenate(
+                [output, np.repeat(output[:1], capacity - actual, axis=0)]
+            )
+
+        try:
+            while True:
+                actual = lib.wl_sym_family_search_propose(search)
+                if actual < 0:
+                    raise ValueError(last_error(lib))
+                if actual == 0:
+                    break
+                identity = lib.wl_sym_family_batch_id(search)
+                if lib.wl_sym_family_batch_shape(
+                    search, shape.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)), 8
+                ):
+                    raise ValueError(last_error(lib))
+                actual = int(shape[1])
+                if lib.wl_sym_family_batch_descriptors(
+                    search, ptr(descriptors), actual * terms * 5
+                ):
+                    raise ValueError(last_error(lib))
+                descriptors[actual:] = descriptors[0]
+                if head != shape[6]:
+                    if scorer:
+                        scorer.dispose()
+                    head = int(shape[6])
+                    if lib.sym_family_search_data(search, ptr(data), data.size):
+                        raise ValueError(last_error(lib))
+                    options = self.params.get("polygrad") or {}
+                    device = (
+                        options.get("device", "auto")
+                        if isinstance(options, dict)
+                        else "auto"
+                    )
+                    scorer = FamilyScorer(
+                        X,
+                        data[:rows],
+                        1 - data[rows : 2 * rows],
+                        descriptors,
+                        solve=solve,
+                        target_mean=data[-1],
+                        hierarchical=self.params.get("hierarchical", False),
+                        device=device,
+                        runtime=self.params.get("polygradRuntime")
+                        or (options if hasattr(options, "Tensor") else None),
+                        dtype=self.params.get("scorerDtype", "float64"),
+                    )
+                result = scorer.score(descriptors)
+                packed = np.ascontiguousarray(
+                    np.concatenate(
+                        [result["coefficients"][:actual], result["losses"][:actual]],
+                        axis=1,
+                    )
+                )
+                if lib.sym_family_search_accept_results(
+                    search, identity, ptr(packed), packed.size
+                ):
+                    raise ValueError(last_error(lib))
+            model = lib.sym_family_search_finish(search)
+            if not model:
+                raise ValueError(last_error(lib))
+            return model
+        finally:
+            if scorer:
+                scorer.dispose()
+            lib.sym_family_search_free(search)
+
     def fit(self, X, y):
         lib = get_lib()
         options = _config(self.params)
@@ -145,7 +365,12 @@ class CFamilyEngine:
             index = {v: i for i, v in enumerate(self.classes)}
             y = [index[v] for v in y]
         target = np.ascontiguousarray(y, dtype=np.float64)
-        handle = lib.wl_sym_family_fit(
+        fit = (
+            self._fit_polygrad
+            if self.params.get("backend") == "polygrad"
+            else lib.wl_sym_family_fit
+        )
+        handle = fit(
             X.ctypes.data_as(_DP),
             X.shape[0],
             X.shape[1],
@@ -161,7 +386,7 @@ class CFamilyEngine:
         self.handle = handle
         self.n_features = X.shape[1]
         self.terms = int(options[2])
-        self.artifact_version = 2
+        self.artifact_version = 3 if self.params.get("hierarchical") else 2
         return self
 
     def _predict(self, X, mode):
@@ -183,9 +408,7 @@ class CFamilyEngine:
 
     def predict(self, X, backend=None, **kwargs):
         if backend == "polygrad":
-            raise ValueError(
-                "Polygrad execution for C family models is not implemented yet"
-            )
+            return self.predict_polygrad(X, kwargs.get("polygrad"))
         out = self._predict(X, 0)
         return np.asarray(self.classes)[out.astype(int)] if self.classes else out
 
@@ -242,7 +465,9 @@ class CFamilyEngine:
             k: c[k] for k in ("bias", "loss", "validLoss", "objective", "complexity")
         }
         out.update(
-            kind="sym.pg-family.formula@1",
+            kind="sym.family.formula@3"
+            if self.artifact_version == 3
+            else "sym.pg-family.formula@1",
             text=text,
             terms=[
                 dict(
@@ -256,6 +481,10 @@ class CFamilyEngine:
                 for i, op in enumerate(c["op"])
             ],
         )
+        if self.artifact_version == 3:
+            out.update(
+                nFeatures=self.n_features, sourceEncoding="inputs-then-earlier-terms"
+            )
         if self.classes:
             out.update(
                 classLabel=self.classes[1 if len(self.classes) == 2 else head],
@@ -354,7 +583,7 @@ class CFamilyEngine:
             ):
                 raise ValueError("family artifact classes mismatch")
             obj.n_features, obj.terms = dims[0], dims[2]
-            obj.artifact_version = 2
+            obj.artifact_version = int.from_bytes(data[12:16], "little")
             return obj
         except Exception:
             obj.dispose()

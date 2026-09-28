@@ -19,6 +19,11 @@ EXPECTED_EXPORTS=(
   wl_sym_family_batch_descriptors
   sym_family_search_score
   sym_family_search_accept
+  sym_family_search_data
+  sym_family_search_solve
+  sym_family_search_accept_results
+  sym_family_refine_data
+  sym_family_refine_accept
   sym_family_search_finish
   sym_family_search_free
   sym_family_save

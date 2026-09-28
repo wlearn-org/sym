@@ -12,7 +12,7 @@ function resolveOperatorIds(params = {}) {
   const requested = params.operators || params.operatorSet || params.operator_set || 'full'
   const names = Array.isArray(requested)
     ? requested
-    : (OP_PRESETS[String(requested).toLowerCase()] || null)
+    : OP_PRESETS[String(requested).toLowerCase()] || null
   if (!names) throw new Error(`unsupported pg-family operatorSet: ${requested}`)
   const ids = []
   for (const value of names) {
@@ -26,12 +26,15 @@ function resolveOperatorIds(params = {}) {
   return ids
 }
 
-
 function formulaText(c, featureNames) {
-  const parts = []
+  const parts = [],
+    expressions = []
+  const hierarchical = [...c.fa, ...c.fb].some(i => i >= featureNames.length)
   for (let t = 0; t < c.terms; t++) {
-    const a = featureNames[c.fa[t]] || `x${c.fa[t]}`
-    const b = featureNames[c.fb[t]] || `x${c.fb[t]}`
+    const a =
+      c.fa[t] < featureNames.length ? featureNames[c.fa[t]] : `t${c.fa[t] - featureNames.length}`
+    const b =
+      c.fb[t] < featureNames.length ? featureNames[c.fb[t]] : `t${c.fb[t] - featureNames.length}`
     const z = `${Number(c.p0[t]).toPrecision(5)}*${a}+${Number(c.p1[t]).toPrecision(5)}`
     let expr
     if (c.op[t] === 0) expr = `(${a}+${b})`
@@ -44,10 +47,13 @@ function formulaText(c, featureNames) {
     else if (c.op[t] === 7) expr = `log(abs(${z})+1e-6)`
     else if (c.op[t] === 8) expr = `sqrt(abs(${z}))`
     else expr = `exp(clamp(${z},-6,6))`
-    parts.push(`${Number(c.coef[t]).toPrecision(5)}*${expr}`)
+    expressions.push(expr)
+    parts.push(`${Number(c.coef[t]).toPrecision(5)}*${hierarchical ? `t${t}` : expr}`)
   }
-  return `${Number(c.bias).toPrecision(5)} + ${parts.join(' + ')}`
+  const result = `${Number(c.bias).toPrecision(5)} + ${parts.join(' + ')}`
+  return hierarchical
+    ? `${expressions.map((v, i) => `t${i} = ${v}`).join('; ')}; ${result}`
+    : result
 }
-
 
 module.exports = { OPS, resolveOperatorIds, formulaText }

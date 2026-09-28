@@ -6,8 +6,8 @@ export type SymInput = DenseMatrix | number[][] | Float32Array | Float64Array
 export type SymTarget = number[] | Int32Array | Float32Array | Float64Array
 export type SymSelection =
   | { strategy?: 'tree'; backend?: 'c'; engine?: 'c' | 'wasm' | 'c-wasm' | 'auto' }
-  | { strategy: 'family'; backend?: 'c'; engine?: never }
-  /** Temporary legacy search; this does not select a shared C-search scorer. */
+  | { strategy: 'family'; backend?: SymBackend; engine?: never }
+  /** Deprecated spelling for strategy: family, backend: polygrad. */
   | { strategy?: 'family'; backend?: 'polygrad'; engine: 'pg-family' }
 
 export interface SymControls {
@@ -31,6 +31,12 @@ export interface SymControls {
   ridge?: number
   immigrantRate?: number
   polishPasses?: number
+  /** 0 keeps sequential polish; a positive size uses frozen-base proposal batches. */
+  polishBatchSize?: number
+  hierarchical?: boolean
+  /** Transport capacity does not change the C proposal stream. */
+  batchSize?: number
+  scorerDtype?: 'float32' | 'float64'
   /** Tree controls. */
   maxNodes?: number
   maxDepth?: number
@@ -47,7 +53,7 @@ export interface SymControls {
   finalSelector?: 'objective' | 'loss' | 'score'
   wasm?: Record<string, unknown>
   polygrad?: Record<string, unknown>
-  /** Additional tree/legacy controls and Python-style parameter aliases. */
+  /** Additional tree controls and Python-style parameter aliases. */
   [key: string]: unknown
 }
 export type SymParams = SymControls & SymSelection
@@ -60,7 +66,6 @@ export interface SymCapabilities {
   backends: SymBackend[]
   activeStrategy: SymStrategy
   activeBackend: SymBackend
-  legacySearch: boolean
   polygradExecution: boolean
   polygradRefinement: boolean
   [key: string]: unknown
@@ -74,7 +79,7 @@ declare class BaseSymModel {
   readonly nClasses: number
   readonly classes: number[]
   readonly capabilities: SymCapabilities
-  /** C paths return this synchronously; legacy pg-family returns a Promise. */
+  /** C fit returns this synchronously; Polygrad fit returns a Promise. */
   fit(X: SymInput, y: SymTarget): MaybePromise<this>
   predict(X: SymInput): MaybePromise<Float64Array>
   decisionFunction(X: SymInput): MaybePromise<Float64Array>
@@ -84,19 +89,25 @@ declare class BaseSymModel {
   frontier(opts?: { format?: 'json' | 'text' }): Record<string, unknown>[]
   verify(checks?: Record<string, unknown>): unknown
   predictPolygrad(X: SymInput, opts?: Record<string, unknown>): Promise<Float64Array>
-  refinePolygrad(X: SymInput, y: SymTarget, opts?: Record<string, unknown>): Promise<Record<string, unknown>>
+  refinePolygrad(
+    X: SymInput,
+    y: SymTarget,
+    opts?: Record<string, unknown>
+  ): Promise<Record<string, unknown>>
   getParams(): SymParams
   setParams(params: Partial<SymParams>): this
   save(path?: string): Uint8Array
   dispose(): void
 }
 export class SymbolicRegressor extends BaseSymModel {
+  static readonly classId: 'wlearn.sym.regressor'
   static readonly typeId: 'wlearn.sym.regressor@1'
   static create(params?: SymParams): Promise<SymbolicRegressor>
   static load(bytesOrPath: Uint8Array | ArrayBuffer | string): Promise<SymbolicRegressor>
   static defaultSearchSpace(): SearchSpace
 }
 export class SymbolicClassifier extends BaseSymModel {
+  static readonly classId: 'wlearn.sym.classifier'
   static readonly typeId: 'wlearn.sym.classifier@1'
   static create(params?: SymParams): Promise<SymbolicClassifier>
   static load(bytesOrPath: Uint8Array | ArrayBuffer | string): Promise<SymbolicClassifier>
@@ -104,8 +115,11 @@ export class SymbolicClassifier extends BaseSymModel {
   predictProba(X: SymInput): MaybePromise<Float64Array>
 }
 export class FormulaTransformer extends BaseSymModel {
+  static readonly classId: 'wlearn.sym.transformer'
   static readonly typeId: 'wlearn.sym.transformer@1'
-  static create(params?: SymControls & Extract<SymSelection, { strategy?: 'tree' }>): Promise<FormulaTransformer>
+  static create(
+    params?: SymControls & Extract<SymSelection, { strategy?: 'tree' }>
+  ): Promise<FormulaTransformer>
   static load(bytesOrPath: Uint8Array | ArrayBuffer | string): Promise<FormulaTransformer>
   static defaultSearchSpace(): SearchSpace
   transform(X: SymInput): Float64Array

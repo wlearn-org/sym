@@ -9,7 +9,7 @@ def _resolve_polygrad_runtime(polygrad=None):
     if isinstance(polygrad, dict):
         device = polygrad.get("device", "auto")
         return pg_module.create(device=device), True
-    return pg_module.create(device="cpu"), True
+    return pg_module.create(), True
 
 
 def _build_formula_tensor(Tensor, x, formula, rows, const_params=None):

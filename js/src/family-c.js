@@ -1,6 +1,6 @@
 'use strict'
 
-const { ValidationError } = require('@wlearn/core')
+const { ValidationError, normalizeX } = require('@wlearn/core')
 const { getWasm } = require('./wasm.js')
 const { OPS, resolveOperatorIds, formulaText } = require('./family-format.js')
 
@@ -11,6 +11,10 @@ function config(p) {
       'family currently supports the MSE readout, including classification margins'
     )
   for (const key of [
+    'stackSummaries',
+    'evalCacheSize',
+    'tensorDevice',
+    'ownPolygradRuntime',
     'maxNodes',
     'max_nodes',
     'maxDepth',
@@ -25,7 +29,6 @@ function config(p) {
     'complexity_hof_size',
     'finalSelector',
     'final_selector',
-    'hierarchical',
     'migrationInterval',
     'migration_interval',
     'migrationCount',
@@ -39,8 +42,6 @@ function config(p) {
     'jit',
     'gatherMode',
     'gather_mode',
-    'polygradRuntime',
-    'polygrad',
     'tournamentSize',
     'tournament_size',
     'constantRate',
@@ -83,7 +84,9 @@ function config(p) {
     get('mutationRate', 'mutation_rate', 0.35),
     get('crossoverRate', 'crossover_rate', 0.55),
     p.ridge ?? 1e-8,
-    p.tol ?? 1e-12
+    p.tol ?? 1e-12,
+    get('polishBatchSize', 'polish_batch_size', 0),
+    p.hierarchical == null ? 0 : typeof p.hierarchical === 'boolean' ? Number(p.hierarchical) : NaN
   ]
   if (values.some(v => typeof v !== 'number' || !Number.isFinite(v)))
     throw new ValidationError('family parameters must be finite numbers')
@@ -108,15 +111,13 @@ function withArrays(arrays, fn) {
   }
 }
 function matrix(X, cols) {
-  if (X && X.data && Number.isInteger(X.rows) && Number.isInteger(X.cols)) return X
-  if (ArrayBuffer.isView(X)) {
-    if (X.length % cols) throw new ValidationError('family matrix shape mismatch')
-    return { rows: X.length / cols, cols, data: Float64Array.from(X) }
-  }
-  if (!Array.isArray(X) || X.some(row => !Array.isArray(row) || row.length !== cols))
-    throw new ValidationError('family matrix shape mismatch')
-  return { rows: X.length, cols, data: Float64Array.from(X.flat()) }
+  if (ArrayBuffer.isView(X)) X = { rows: X.length / cols, cols, data: X }
+  const m = normalizeX(X)
+  if (m.cols !== cols || !m.data.every(v => Number.isFinite(Math.fround(v))))
+    throw new ValidationError('family matrix shape or values invalid')
+  return m
 }
+
 function packed(c) {
   if (!c || !Number.isInteger(c.terms) || c.terms < 1 || c.terms > 32)
     throw new ValidationError('invalid family term count')
@@ -148,6 +149,7 @@ class CFamilyEngine {
           return index.get(c)
         })
       : y
+    if (this.params.backend === 'polygrad') return this._fitPolygrad(X, target, options)
     const handle = withArrays([X.data, target, options], (w, xp, yp, pp) => {
       const h = w._wl_sym_family_fit(
         xp,
@@ -166,8 +168,214 @@ class CFamilyEngine {
     this.handle = handle
     this.nFeatures = X.cols
     this.terms = options[2]
-    this.artifactVersion = 2
+    this.artifactVersion = this.params.hierarchical ? 3 : 2
     return this
+  }
+  async predictPolygrad(X, opts = {}) {
+    const { predict } = require('./family-refine.js')
+    const m = matrix(X, this.nFeatures)
+    const heads = this.classes.length > 2 ? this.classes.length : 1
+    const values = []
+    // Copy formulas before the first await; no borrowed C state crosses yields.
+    const candidates = Array.from({ length: heads }, (_, h) => this._candidate(h, -1))
+    for (const c of candidates)
+      values.push(
+        await predict(
+          c,
+          m,
+          opts.polygradRuntime ||
+            opts.polygrad ||
+            this.params.polygradRuntime ||
+            this.params.polygrad
+        )
+      )
+    if (!this.classes.length) return values[0]
+    return Float64Array.from({ length: m.rows }, (_, row) => {
+      let best = 0
+      for (let h = 1; h < heads; h++) if (values[h][row] > values[best][row]) best = h
+      return this.classes[heads === 1 ? Number(values[0][row] >= 0) : best]
+    })
+  }
+  async refinePolygrad(X, y, opts = {}) {
+    const { refine } = require('./family-refine.js')
+    const m = matrix(X, this.nFeatures),
+      head = opts.index ?? 0
+    const heads = this.classes.length > 2 ? this.classes.length : 1
+    if (!Number.isInteger(head) || head < 0 || head >= heads)
+      throw new ValidationError('invalid family head index')
+    if (y.length !== m.rows) throw new ValidationError('family target length mismatch')
+    const labels = new Map(this.classes.map((v, i) => [v, i]))
+    const target = Float64Array.from(y, v => (this.classes.length ? (labels.get(v) ?? NaN) : v))
+    const fraction = this.params.validationFraction ?? this.params.validation_fraction ?? 0
+    const seed = this.params.seed ?? 42
+    const handle = this.handle
+    const data = withArrays([target, new Float64Array(2 * m.rows + 1)], (w, yp, out) => {
+      if (w._sym_family_refine_data(handle, head, yp, m.rows, fraction, seed, out, 2 * m.rows + 1))
+        throw error(w)
+      return w.HEAPF64.slice(out / 8, out / 8 + 2 * m.rows + 1)
+    })
+    const trainX = [],
+      trainY = []
+    for (let r = 0; r < m.rows; r++)
+      if (data[m.rows + r]) {
+        for (let j = 0; j < m.cols; j++) trainX.push(m.data[r * m.cols + j])
+        trainY.push(data[r])
+      }
+    const { updates, history } = await refine(
+      this._candidate(head, -1),
+      { rows: trainY.length, cols: m.cols, data: trainX },
+      trainY,
+      { ...this.params, ...opts }
+    )
+    if (!this.handle || this.handle !== handle)
+      throw new ValidationError('family model replaced or disposed during refinement')
+    return withArrays([updates, m.data, target, new Float64Array(6)], (w, up, xp, yp, out) => {
+      const rc = w._sym_family_refine_accept(
+        handle,
+        head,
+        up,
+        updates.length,
+        xp,
+        m.rows,
+        m.cols,
+        yp,
+        fraction,
+        seed,
+        opts.tolerance ?? 1e-10,
+        out
+      )
+      if (rc < 0) throw error(w)
+      const v = w.HEAPF64.slice(out / 8, out / 8 + 6)
+      return {
+        status: 'ok',
+        committed: !!rc,
+        head,
+        history,
+        beforeLoss: v[0],
+        beforeValidLoss: v[1],
+        beforeObjective: v[2],
+        afterLoss: v[3],
+        afterValidLoss: v[4],
+        afterObjective: v[5]
+      }
+    })
+  }
+  async _fitPolygrad(X, target, options) {
+    const { FamilyScorer } = require('./family-scorer.js')
+    const w = getWasm()
+    const capacity = this.params.batchSize ?? this.params.batch_size ?? 64
+    if (!Number.isInteger(capacity) || capacity < 1 || capacity > 512)
+      throw new ValidationError('family batchSize must be an integer in [1,512]')
+    const search = withArrays([X.data, target, options], (w, xp, yp, pp) =>
+      w._wl_sym_family_search_new(
+        xp,
+        X.rows,
+        X.cols,
+        yp,
+        this.classes.length ? 1 : 0,
+        this.classes.length,
+        pp,
+        options.length,
+        capacity,
+        Math.min(X.rows, 4096)
+      )
+    )
+    if (!search) throw error(w)
+    const terms = options[2]
+    const descriptors = new Float64Array(capacity * terms * 5)
+    let scorer,
+      head = -1,
+      actual,
+      identity
+    const solve = (factors, stats, width) =>
+      withArrays(
+        [
+          Float64Array.from(factors.subarray(0, actual * width * width)),
+          Float64Array.from(stats.subarray(0, actual * terms * 3)),
+          new Float64Array(actual * (terms + 1))
+        ],
+        (w, fp, sp, out) => {
+          if (
+            w._sym_family_search_solve(
+              search,
+              identity,
+              fp,
+              actual * width * width,
+              sp,
+              actual * terms * 3,
+              width,
+              out,
+              actual * (terms + 1)
+            )
+          )
+            throw error(w)
+          const values = new Float64Array(capacity * (terms + 1))
+          values.set(w.HEAPF64.subarray(out / 8, out / 8 + actual * (terms + 1)))
+          for (let c = actual; c < capacity; c++)
+            values.set(values.subarray(0, terms + 1), c * (terms + 1))
+          return values
+        }
+      )
+    try {
+      for (;;) {
+        const rc = w._wl_sym_family_search_propose(search)
+        if (rc < 0) throw error(w)
+        if (!rc) break
+        identity = w._wl_sym_family_batch_id(search)
+        const shape = withArrays([new Float64Array(4)], (w, ptr) => {
+          if (w._wl_sym_family_batch_shape(search, ptr, 8)) throw error(w)
+          return w.HEAP32.slice(ptr / 4, ptr / 4 + 8)
+        })
+        actual = shape[1]
+        withArrays([new Float64Array(actual * terms * 5)], (w, ptr) => {
+          if (w._wl_sym_family_batch_descriptors(search, ptr, actual * terms * 5)) throw error(w)
+          descriptors.set(w.HEAPF64.subarray(ptr / 8, ptr / 8 + actual * terms * 5))
+        })
+        for (let c = actual; c < capacity; c++)
+          descriptors.set(descriptors.subarray(0, terms * 5), c * terms * 5)
+        if (head !== shape[6]) {
+          if (scorer) scorer.dispose()
+          head = shape[6]
+          const data = withArrays([new Float64Array(2 * X.rows + 1)], (w, ptr) => {
+            if (w._sym_family_search_data(search, ptr, 2 * X.rows + 1)) throw error(w)
+            return w.HEAPF64.slice(ptr / 8, ptr / 8 + 2 * X.rows + 1)
+          })
+          scorer = await FamilyScorer.create(
+            X,
+            data.slice(0, X.rows),
+            data.slice(X.rows, 2 * X.rows),
+            data[2 * X.rows],
+            descriptors,
+            capacity,
+            terms,
+            solve,
+            this.params
+          )
+        }
+        const { coefficients, losses } = await scorer.score(descriptors)
+        const packed = new Float64Array(actual * (terms + 3))
+        for (let c = 0; c < actual; c++) {
+          packed.set(coefficients.subarray(c * (terms + 1), (c + 1) * (terms + 1)), c * (terms + 3))
+          packed[c * (terms + 3) + terms + 1] = losses[2 * c]
+          packed[c * (terms + 3) + terms + 2] = losses[2 * c + 1]
+        }
+        withArrays([packed], (w, ptr) => {
+          if (w._sym_family_search_accept_results(search, identity, ptr, packed.length))
+            throw error(w)
+        })
+      }
+      const model = w._sym_family_search_finish(search)
+      if (!model) throw error(w)
+      this.dispose()
+      this.handle = model
+      this.nFeatures = X.cols
+      this.terms = terms
+      this.artifactVersion = this.params.hierarchical ? 3 : 2
+      return this
+    } finally {
+      if (scorer) scorer.dispose()
+      w._sym_family_search_free(search)
+    }
   }
   _predict(X, mode) {
     const m = matrix(X, this.nFeatures)
@@ -187,8 +395,7 @@ class CFamilyEngine {
     })
   }
   predict(X, opts = {}) {
-    if (opts.backend === 'polygrad')
-      throw new ValidationError('Polygrad execution for C family models is not implemented yet')
+    if (opts.backend === 'polygrad') return this.predictPolygrad(X, opts)
     const out = this._predict(X, 0)
     return this.classes.length ? Float64Array.from(out, i => this.classes[i]) : out
   }
@@ -234,7 +441,10 @@ class CFamilyEngine {
     const text = formulaText(c, names)
     if (opts.format === 'text') return text
     const result = {
-      kind: 'sym.pg-family.formula@1',
+      kind: this.artifactVersion === 3 ? 'sym.family.formula@3' : 'sym.pg-family.formula@1',
+      ...(this.artifactVersion === 3
+        ? { nFeatures: this.nFeatures, sourceEncoding: 'inputs-then-earlier-terms' }
+        : {}),
       text,
       bias: c.bias,
       loss: c.loss,
@@ -342,7 +552,10 @@ class CFamilyEngine {
         throw new ValidationError('family artifact classes mismatch')
       m.nFeatures = dims[0]
       m.terms = dims[2]
-      m.artifactVersion = 2
+      m.artifactVersion = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(
+        12,
+        true
+      )
       return m
     } catch (err) {
       m.dispose()

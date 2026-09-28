@@ -1,0 +1,123 @@
+{
+  "environment": {
+    "python": "3.11.12",
+    "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.35"
+  },
+  "settings": {
+    "rows": 512,
+    "population": 64,
+    "generations": 10,
+    "terms": 4,
+    "seeds": "11,23,37",
+    "device": "CUDA",
+    "hierarchical": false,
+    "polish": 2,
+    "refine": 0,
+    "output": "../temp/runs/20260928-sym-completion/fit-512.json"
+  },
+  "timing": "Complete fit, fresh estimator/runtime; includes device setup and compilation; no prewarm.",
+  "results": [
+    {
+      "dataset": "smooth",
+      "seed": 11,
+      "backend": "c",
+      "fit_ms": 39.82004900171887,
+      "test_r2": 0.9785892652096588,
+      "bytes": 4875
+    },
+    {
+      "dataset": "smooth",
+      "seed": 11,
+      "backend": "polygrad",
+      "fit_ms": 5126.706583003397,
+      "test_r2": 0.9785892652096588,
+      "bytes": 4889,
+      "max_prediction_delta_from_c": 0.0
+    },
+    {
+      "dataset": "smooth",
+      "seed": 23,
+      "backend": "c",
+      "fit_ms": 38.903879998542834,
+      "test_r2": 0.9967288893038034,
+      "bytes": 4875
+    },
+    {
+      "dataset": "smooth",
+      "seed": 23,
+      "backend": "polygrad",
+      "fit_ms": 2762.502042998676,
+      "test_r2": 0.9967288893038034,
+      "bytes": 4889,
+      "max_prediction_delta_from_c": 0.0
+    },
+    {
+      "dataset": "smooth",
+      "seed": 37,
+      "backend": "c",
+      "fit_ms": 36.40208700380754,
+      "test_r2": 0.9787280243151785,
+      "bytes": 4875
+    },
+    {
+      "dataset": "smooth",
+      "seed": 37,
+      "backend": "polygrad",
+      "fit_ms": 2761.879083001986,
+      "test_r2": 0.9787280243151785,
+      "bytes": 4889,
+      "max_prediction_delta_from_c": 0.0
+    },
+    {
+      "dataset": "friedman1",
+      "seed": 11,
+      "backend": "c",
+      "fit_ms": 38.450003004982136,
+      "test_r2": 0.8283067300342042,
+      "bytes": 4875
+    },
+    {
+      "dataset": "friedman1",
+      "seed": 11,
+      "backend": "polygrad",
+      "fit_ms": 2782.4272889993154,
+      "test_r2": 0.8283067300342042,
+      "bytes": 4889,
+      "max_prediction_delta_from_c": 0.0
+    },
+    {
+      "dataset": "friedman1",
+      "seed": 23,
+      "backend": "c",
+      "fit_ms": 36.74976299953414,
+      "test_r2": 0.7288465305475773,
+      "bytes": 4875
+    },
+    {
+      "dataset": "friedman1",
+      "seed": 23,
+      "backend": "polygrad",
+      "fit_ms": 2793.5117460001493,
+      "test_r2": 0.7288465305475773,
+      "bytes": 4889,
+      "max_prediction_delta_from_c": 0.0
+    },
+    {
+      "dataset": "friedman1",
+      "seed": 37,
+      "backend": "c",
+      "fit_ms": 36.52209500432946,
+      "test_r2": 0.7508335646393005,
+      "bytes": 4875
+    },
+    {
+      "dataset": "friedman1",
+      "seed": 37,
+      "backend": "polygrad",
+      "fit_ms": 2790.0129439949524,
+      "test_r2": 0.7508335646393005,
+      "bytes": 4889,
+      "max_prediction_delta_from_c": 0.0
+    }
+  ]
+}

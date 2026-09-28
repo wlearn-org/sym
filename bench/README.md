@@ -85,3 +85,36 @@ Reported fields:
 - `bundleBytes`
 
 `sym` is the current C-first product package. `symc` is the older copied C baseline retained for comparison.
+
+## Shared family backends (2026-09-28)
+
+`family-backends.py` compares complete C and public-Polygrad fits with matched
+seeds, independent test rows, batched polish, and optional hierarchy/refinement.
+The committed `results/fit-*-20260928.json` files contain raw measurements.
+
+On an RTX 3060 Laptop, Python 3.11.12, native single-thread C versus CUDA float64,
+4096 rows / population 256 / 120 generations / 8 terms took about 30–34 seconds
+in C and 15–16 seconds with Polygrad. All six test prediction comparisons matched
+exactly. Each fit creates its runtime and includes graph setup; repeated runs
+share a process and can reuse compiler/driver caches. This is not a fresh-process
+cold-start comparison or a reproduction of the historical symcpg 10× result.
+
+At 512 rows / population 64 / 10 generations / 4 terms, C took about 36–39 ms
+following initial library loading; Polygrad took about 2.8 seconds. C remains
+the default. The hierarchy/refinement ablation did not consistently improve test
+quality; only one of six distinct refinement trials was accepted. Both features
+remain optional. These two synthetic datasets do not establish general quality.
+
+Run with local Python packages and a freshly built Sym library:
+
+```sh
+python bench/family-backends.py --rows 4096 --population 256 --generations 120 --terms 8 --output results.json
+sh bench/scorer/build.sh
+POLY_DEV=CUDA python -m pytest bench/scorer/test_scorer.py
+```
+
+`scorer/` contains diagnostic C-reference adapters and fixed-candidate tests;
+its Python numerical scorer delegates to the package implementation. Its isolated
+kernel timings are not complete-fit speedups. The recorded fit measurements
+precede final boundary-validation and environment-selection fixes; their explicit
+CUDA device and numerical algorithm are unchanged by those fixes.

@@ -32,6 +32,12 @@ COMMON_FLAGS=(
   --define:__filename='""'
 )
 
+# Local frontend qualification before Polygrad is published.
+if [[ -n "${WLEARN_SYM_POLYGRAD_JS:-}" ]]; then
+  COMMON_FLAGS+=("--alias:polygrad=${WLEARN_SYM_POLYGRAD_JS}"
+    "--alias:polygrad/async=${WLEARN_SYM_POLYGRAD_JS}/src/browser.async.js")
+fi
+
 npx esbuild "${PROJECT_DIR}/src/index.js" \
   "${COMMON_FLAGS[@]}" \
   --format=iife \

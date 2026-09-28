@@ -5,9 +5,9 @@ function resolveStrategy(params, task) {
   let legacy = null
   if (params.engine != null) {
     const engine = String(params.engine).toLowerCase()
-    if (engine === 'pg-family') legacy = { strategy: 'family', backend: 'polygrad', legacy: true }
+    if (engine === 'pg-family') legacy = { strategy: 'family', backend: 'polygrad' }
     else if (['c', 'wasm', 'c-wasm', 'auto'].includes(engine))
-      legacy = { strategy: 'tree', backend: 'c', legacy: false }
+      legacy = { strategy: 'tree', backend: 'c' }
     else throw new ValidationError(`unsupported sym engine: ${params.engine}`)
   }
   const strategy = params.strategy ?? legacy?.strategy ?? 'tree'
@@ -18,11 +18,9 @@ function resolveStrategy(params, task) {
     throw new ValidationError('engine conflicts with strategy/backend')
   if (task === 'transformer' && strategy !== 'tree')
     throw new ValidationError('family strategy does not support FormulaTransformer')
-  if (backend === 'polygrad' && !legacy?.legacy)
-    throw new ValidationError(
-      'shared-search Polygrad backend is not implemented yet; engine="pg-family" remains a separate legacy implementation'
-    )
-  return { strategy, backend, legacy: Boolean(legacy?.legacy) }
+  if (backend === 'polygrad' && strategy === 'tree')
+    throw new ValidationError('tree search currently supports backend="c" only')
+  return { strategy, backend }
 }
 function familySearchSpace(tree) {
   const space = {

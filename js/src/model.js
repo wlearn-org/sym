@@ -5,7 +5,6 @@ const { CFamilyEngine } = require('./family-c.js')
 const { resolveStrategy, familySearchSpace } = require('./strategy.js')
 const { FormulaVerifier } = require('./verifier.js')
 const { loadPolygrad, evaluateFormulaPolygrad, refineFormulaPolygrad } = require('./polygrad.js')
-const { PgFamilyRegressorEngine, PgFamilyClassifierEngine } = require('./engine-pg-family.js')
 const {
   encodeBundle,
   decodeBundle,
@@ -190,17 +189,20 @@ class BaseSymModel {
     this._polygrad = null
     this._ownsPolygrad = false
     this._choice = resolveStrategy(params, taskName)
-    this._engineName = this._choice.legacy ? ENGINE_PG_FAMILY : ENGINE_C
+    this._params = {
+      ...this._params,
+      strategy: this._choice.strategy,
+      backend: this._choice.backend
+    }
+    this._engineName = this._choice.backend === 'polygrad' ? ENGINE_PG_FAMILY : ENGINE_C
     this._familyEngine = null
   }
 
   static async _create(cls, params) {
     const model = new cls(params)
-    if (model._engineName !== ENGINE_PG_FAMILY) {
-      await loadSym(params && params.wasm)
-      if (params && params.polygrad && model._choice.strategy === 'tree')
-        await model._getPolygrad(params.polygrad)
-    }
+    await loadSym(params && params.wasm)
+    if (params && params.polygrad && model._choice.strategy === 'tree')
+      await model._getPolygrad(params.polygrad)
     return model
   }
 
@@ -222,9 +224,10 @@ class BaseSymModel {
 
   fit(X, y) {
     if (this._disposed) throw new DisposedError(`${this.constructor.name} has been disposed.`)
+    if (this._fitting) throw new ValidationError('fit is already in progress')
     const { rows, cols, data } = normalizeX(X)
     const yArr = normalizeY(y, rows)
-    if (this._choice.strategy === 'family' && !this._choice.legacy) {
+    if (this._choice.strategy === 'family') {
       const classes =
         this._taskName === 'classification'
           ? this._params.classes
@@ -239,25 +242,38 @@ class BaseSymModel {
       )
         throw new ValidationError('classification requires unique finite classes')
       const engine = new CFamilyEngine(this._params, classes)
+      const commit = () => {
+        if (this._disposed) throw new DisposedError('model disposed during fit')
+        this._freeHandle()
+        this._familyEngine = engine
+        this._classes = classes
+        this._nClasses = classes.length
+        this._nOutputs = classes.length > 2 ? classes.length : 1
+        this._nFeatures = cols
+        this._fitted = true
+        return this
+      }
       try {
-        engine.fit({ rows, cols, data }, yArr)
+        const fitted = engine.fit({ rows, cols, data }, yArr)
+        if (fitted && typeof fitted.then === 'function') {
+          this._fitting = true
+          return fitted
+            .then(commit)
+            .catch(err => {
+              engine.dispose()
+              throw err
+            })
+            .finally(() => {
+              this._fitting = false
+            })
+        }
+        return commit()
       } catch (err) {
         engine.dispose()
         throw err
       }
-      this._freeHandle()
-      this._familyEngine = engine
-      this._classes = classes
-      this._nClasses = classes.length
-      this._nOutputs = classes.length > 2 ? classes.length : 1
-      this._nFeatures = cols
-      this._fitted = true
-      return this
     }
     this._freeHandle()
-    if (this._engineName === ENGINE_PG_FAMILY) {
-      return this._fitPgFamily({ rows, cols, data }, yArr)
-    }
     const wasm = getWasm()
 
     let task = TASK[this._taskName]
@@ -335,34 +351,6 @@ class BaseSymModel {
     this._nFeatures = wasm._wl_sym_get_n_features(handle)
     this._nOutputs = wasm._wl_sym_get_n_outputs(handle)
     this._nClasses = wasm._wl_sym_get_n_classes(handle)
-    return this
-  }
-
-  async _fitPgFamily(matrix, yArr) {
-    if (this._taskName === 'transformer') {
-      throw new Error(
-        'engine="pg-family" currently supports SymbolicRegressor and SymbolicClassifier; use engine="c" for FormulaTransformer'
-      )
-    }
-    const params = { ...this._params }
-    let engine
-    if (this._taskName === 'classification') {
-      this._classes = params.classes ? Array.from(params.classes, Number) : uniqueSorted(yArr)
-      params.classes = this._classes
-      engine = await PgFamilyClassifierEngine.create(params)
-      await engine.fit(matrix, yArr)
-      this._nClasses = this._classes.length
-      this._nOutputs = this._nClasses === 2 ? 1 : this._nClasses
-    } else {
-      engine = await PgFamilyRegressorEngine.create(params)
-      await engine.fit(matrix, yArr)
-      this._nOutputs = 1
-      this._nClasses = 0
-      this._classes = []
-    }
-    this._familyEngine = engine
-    this._fitted = true
-    this._nFeatures = matrix.cols
     return this
   }
 
@@ -473,8 +461,6 @@ class BaseSymModel {
   async predictPolygrad(X, opts = {}) {
     this._ensureFitted()
     if (this._familyEngine) {
-      if (this._taskName !== 'regression')
-        throw new Error('predictPolygrad for pg-family currently supports regression only')
       return this._familyEngine.predict(X, { backend: 'polygrad', ...opts })
     }
     const runtime = await this._getPolygrad(opts.polygrad || this._params.polygrad)
@@ -508,12 +494,13 @@ class BaseSymModel {
 
   async refinePolygrad(X, y, opts = {}) {
     this._ensureFitted()
-    if (this._familyEngine) {
-      return {
-        status: 'unsupported',
-        reason:
-          'post-fit Polygrad refinement is available for tree formulas only; family models retain their fitted readout',
-        committed: false
+    if (this._familyEngine instanceof CFamilyEngine) {
+      if (this._fitting) throw new ValidationError('fit or refinement is already in progress')
+      this._fitting = true
+      try {
+        return await this._familyEngine.refinePolygrad(X, y, opts)
+      } finally {
+        this._fitting = false
       }
     }
     if (this._taskName !== 'regression') {
@@ -579,16 +566,17 @@ class BaseSymModel {
   save(path) {
     this._ensureFitted()
     if (this._familyEngine) {
-      const binary = this._familyEngine.artifactVersion === 2
+      const binary = this._familyEngine.artifactVersion >= 2
       const data = binary
         ? this._familyEngine.toBytes()
         : textEncoder.encode(JSON.stringify(this._familyEngine.toState()))
       const bundle = encodeBundle(
         {
-          typeId: binary ? this.constructor.typeId.replace('@1', '@2') : this.constructor.typeId,
+          typeId: binary
+            ? this.constructor.typeId.replace('@1', `@${this._familyEngine.artifactVersion}`)
+            : this.constructor.typeId,
           params: this.getParams(),
           metadata: {
-            ...(this._choice.legacy ? { engine: ENGINE_PG_FAMILY } : {}),
             strategy: 'family',
             backend: this._choice.backend,
             nFeatures: this._nFeatures,
@@ -639,7 +627,8 @@ class BaseSymModel {
 
   static async _fromBundle(manifest, toc, blobs) {
     const binary =
-      manifest.typeId === this.typeId.replace('@1', '@2') && this.typeId !== TYPE_ID_TRANSFORMER
+      [2, 3].some(v => manifest.typeId === this.typeId.replace('@1', `@${v}`)) &&
+      this.typeId !== TYPE_ID_TRANSFORMER
     if (manifest.typeId !== this.typeId && !binary) {
       throw new Error(`Unsupported sym bundle typeId: ${manifest.typeId}`)
     }
@@ -656,6 +645,8 @@ class BaseSymModel {
         if (!Array.isArray(classes) || (this.typeId === TYPE_ID_CLASSIFIER) !== classes.length > 0)
           throw new ValidationError('family payload task mismatch')
         model._familyEngine = CFamilyEngine.fromBytes(raw, model._params, classes)
+        if (!manifest.typeId.endsWith(`@${model._familyEngine.artifactVersion}`))
+          throw new ValidationError('family artifact semantics/typeId mismatch')
         model._nFeatures = model._familyEngine.nFeatures
         model._classes = [...classes]
         model._nClasses = classes.length
@@ -674,7 +665,7 @@ class BaseSymModel {
       }
     }
     if (entry.mediaType === FAMILY_MEDIA)
-      throw new ValidationError('family binary requires an @2 typeId')
+      throw new ValidationError('family binary requires an @2 or @3 typeId')
     if (
       entry.mediaType === PG_FAMILY_MEDIA ||
       (manifest.metadata && manifest.metadata.engine === ENGINE_PG_FAMILY)
@@ -685,44 +676,23 @@ class BaseSymModel {
         )
       }
       const state = parseJsonBytes(raw)
-      if (manifest.params?.strategy === 'family' && manifest.params?.backend === 'c') {
-        const expected = manifest.typeId === TYPE_ID_CLASSIFIER ? 'classifier' : 'regressor'
-        if (state?.kind !== `wlearn.sym.pg-family.${expected}@1`)
-          throw new ValidationError('family payload task does not match bundle type')
-        await loadSym()
-        const model = new this(manifest.params)
-        model._familyEngine = CFamilyEngine.fromState(state, manifest.params)
-        model._fitted = true
-        model._nFeatures = model._familyEngine.nFeatures
-        model._classes = model._familyEngine.classes
-        model._nClasses = model._classes.length
-        model._nOutputs = model._nClasses > 2 ? model._nClasses : 1
-        return model
+      const expected = manifest.typeId === TYPE_ID_CLASSIFIER ? 'classifier' : 'regressor'
+      if (state?.kind !== `wlearn.sym.pg-family.${expected}@1`)
+        throw new ValidationError('family payload task does not match bundle type')
+      await loadSym()
+      const params = {
+        ...manifest.params,
+        strategy: 'family',
+        backend: manifest.params?.backend || 'polygrad'
       }
-      const model = new this({ ...(manifest.params || {}), engine: ENGINE_PG_FAMILY })
-      model._engineName = ENGINE_PG_FAMILY
-      if (manifest.typeId === TYPE_ID_CLASSIFIER) {
-        model._familyEngine = PgFamilyClassifierEngine.fromStateSync(state)
-      } else {
-        model._familyEngine = PgFamilyRegressorEngine.fromStateSync(state)
-      }
+      delete params.engine
+      const model = new this(params)
+      model._familyEngine = CFamilyEngine.fromState(state, params)
       model._fitted = true
-      model._nFeatures = Number(
-        (manifest.metadata && manifest.metadata.nFeatures) || model._familyEngine.nFeatures || 0
-      )
-      model._nOutputs = Number(
-        (manifest.metadata && manifest.metadata.nOutputs) ||
-          (manifest.typeId === TYPE_ID_CLASSIFIER
-            ? model._familyEngine.classes.length === 2
-              ? 1
-              : model._familyEngine.classes.length
-            : 1)
-      )
-      model._nClasses = Number((manifest.metadata && manifest.metadata.nClasses) || 0)
-      model._classes =
-        manifest.metadata && manifest.metadata.classes
-          ? [...manifest.metadata.classes]
-          : model._familyEngine.classes || []
+      model._nFeatures = model._familyEngine.nFeatures
+      model._classes = model._familyEngine.classes
+      model._nClasses = model._classes.length
+      model._nOutputs = model._nClasses > 2 ? model._nClasses : 1
       return model
     }
     await loadSym()
@@ -758,17 +728,15 @@ class BaseSymModel {
   }
 
   setParams(params = {}) {
+    if (this._fitting)
+      throw new ValidationError('cannot change parameters during fit or refinement')
     const merged = { ...this._params, ...params }
     const choice = resolveStrategy(merged, this._taskName)
-    if (
-      choice.strategy !== this._choice.strategy ||
-      choice.backend !== this._choice.backend ||
-      choice.legacy !== this._choice.legacy
-    )
+    if (choice.strategy !== this._choice.strategy || choice.backend !== this._choice.backend)
       this._freeHandle()
     this._params = merged
     this._choice = choice
-    this._engineName = choice.legacy ? ENGINE_PG_FAMILY : ENGINE_C
+    this._engineName = choice.backend === 'polygrad' ? ENGINE_PG_FAMILY : ENGINE_C
     return this
   }
 
@@ -784,14 +752,13 @@ class BaseSymModel {
       earlyStopping: true,
       featureImportances: false,
       formulas: true,
-      polygradExecution: this._choice.strategy === 'tree' || this._choice.legacy,
-      polygradRefinement: this._taskName === 'regression' && this._choice.strategy === 'tree',
+      polygradExecution: true,
+      polygradRefinement: this._choice.strategy === 'family' || this._taskName === 'regression',
       engines: this._taskName === 'transformer' ? [ENGINE_C] : [ENGINE_C, ENGINE_PG_FAMILY],
       strategies: this._taskName === 'transformer' ? ['tree'] : ['tree', 'family'],
-      backends: ['c'],
+      backends: this._choice.strategy === 'family' ? ['c', 'polygrad'] : ['c'],
       activeStrategy: this._choice.strategy,
       activeBackend: this._choice.backend,
-      legacySearch: this._choice.legacy,
       activeEngine: this._engineName
     }
   }
@@ -851,6 +818,9 @@ class BaseSymModel {
 }
 
 class SymbolicRegressor extends BaseSymModel {
+  static get classId() {
+    return 'wlearn.sym.regressor'
+  }
   constructor(params = {}) {
     super(params, 'regression')
   }
@@ -879,6 +849,9 @@ class SymbolicRegressor extends BaseSymModel {
 }
 
 class SymbolicClassifier extends BaseSymModel {
+  static get classId() {
+    return 'wlearn.sym.classifier'
+  }
   constructor(params = {}) {
     super(params, 'classification')
   }
@@ -927,6 +900,9 @@ class SymbolicClassifier extends BaseSymModel {
 }
 
 class FormulaTransformer extends BaseSymModel {
+  static get classId() {
+    return 'wlearn.sym.transformer'
+  }
   constructor(params = {}) {
     super(params, 'transformer')
   }
@@ -960,6 +936,12 @@ class FormulaTransformer extends BaseSymModel {
 }
 
 function registerSymLoaders() {
+  register(TYPE_ID_REGRESSOR.replace('@1', '@3'), (m, t, b) =>
+    SymbolicRegressor._fromBundle(m, t, b)
+  )
+  register(TYPE_ID_CLASSIFIER.replace('@1', '@3'), (m, t, b) =>
+    SymbolicClassifier._fromBundle(m, t, b)
+  )
   register(TYPE_ID_REGRESSOR.replace('@1', '@2'), (m, t, b) =>
     SymbolicRegressor._fromBundle(m, t, b)
   )

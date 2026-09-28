@@ -295,7 +295,7 @@ async function main() {
     }
   })
 
-  await test('pg-family operator sets and stacked summaries are persisted', async () => {
+  await test('pg-family operator sets and batched polish are persisted', async () => {
     const { X, y } = makeRegression(36)
     let model
     try {
@@ -308,7 +308,7 @@ async function main() {
         frontierSize: 4,
         seed: 20260707,
         operators: ['add', 'sub', 'mul'],
-        stackSummaries: true,
+        polishBatchSize: 12, polishPasses: 1,
         polygrad: { core: 'wasm', device: 'auto' }
       })
     } catch (err) {
@@ -319,14 +319,12 @@ async function main() {
     try {
       const formula = model.formula({ format: 'json' })
       assert(formula.terms.every(term => ['add', 'sub', 'mul'].includes(term.op)), 'formula respects operators list')
-      const timings = model._familyEngine.stats.timings
-      assert(timings[0].fitCount === 12, `initial fitCount ${timings[0].fitCount}`)
-      assert(timings.some(item => item.fitCount < 12), 'elite/cache path reduced fitted candidates')
+      // Exact elite evaluation counts are checked by test_family_search.c.
       const loaded = await SymbolicRegressor.load(model.save())
       try {
         const params = loaded.getParams()
         assert(JSON.stringify(params.operators) === JSON.stringify(['add', 'sub', 'mul']), 'operators persisted')
-        assert(params.stackSummaries === true, 'stackSummaries persisted')
+        assert(params.polishBatchSize === 12, 'batched polish persisted')
         assert(!('_opIds' in params), 'internal op ids leaked')
       } finally {
         loaded.dispose()
