@@ -253,7 +253,9 @@ class CFamilyEngine:
         from ._family_scorer import FamilyScorer
 
         lib = get_lib()
-        capacity = self.params.get("batchSize", self.params.get("batch_size", 64))
+        capacity = self.params.get(
+            "batchSize", self.params.get("batch_size", min(int(config[0]), 512))
+        )
         if type(capacity) is not int or not 1 <= capacity <= 512:
             raise ValueError("family batchSize must be an integer in [1,512]")
         search = lib.wl_sym_family_search_new(

@@ -175,17 +175,9 @@ window.__testResult = (async () => {
   })
 }
 
-async function main() {
+async function launchBrowser() {
   const chromium = loadChromium()
-  const bundles = [
-    { name: 'IIFE', file: `dist/${NAME}.js`, type: 'iife', global: NAME },
-    { name: 'ESM', file: `dist/${NAME}.mjs`, type: 'esm' }
-  ]
-  const server = http.createServer((req, res) => res.end('<!doctype html><html></html>'))
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
-  server.unref()
-  const origin = `http://127.0.0.1:${server.address().port}`
-  const browser = await chromium.launch({
+  return chromium.launch({
     headless: DEVICE !== 'webgpu',
     ignoreDefaultArgs: DEVICE === 'webgpu' ? ['--enable-unsafe-swiftshader'] : [],
     executablePath: chromiumExecutablePath(chromium),
@@ -205,6 +197,18 @@ async function main() {
         : [])
     ]
   })
+}
+
+async function main() {
+  const bundles = [
+    { name: 'IIFE', file: `dist/${NAME}.js`, type: 'iife', global: NAME },
+    { name: 'ESM', file: `dist/${NAME}.mjs`, type: 'esm' }
+  ]
+  const server = http.createServer((req, res) => res.end('<!doctype html><html></html>'))
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  server.unref()
+  const origin = `http://127.0.0.1:${server.address().port}`
+  const browser = await launchBrowser()
   let failed = 0
   let passed = 0
   try {
@@ -232,7 +236,10 @@ async function main() {
   if (failed) process.exit(1)
 }
 
-main().catch(err => {
-  console.error(err)
-  process.exit(1)
-})
+if (require.main === module)
+  main().catch(err => {
+    console.error(err)
+    process.exit(1)
+  })
+
+module.exports = { launchBrowser }

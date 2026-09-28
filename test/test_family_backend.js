@@ -1,7 +1,32 @@
 'use strict'
 const assert = require('node:assert/strict')
 const { SymbolicRegressor, SymbolicClassifier } = require('../js/src')
+const { createRequire } = require('node:module')
+const pkgRequire = createRequire(require('node:path').resolve(__dirname, '../js/package.json'))
 async function main() {
+  const { FamilyScorer } = require('../js/src/family-scorer')
+  const createScorer = FamilyScorer.create
+  const batches = []
+  FamilyScorer.create = function (...args) {
+    batches.push(args[5])
+    return createScorer.apply(this, args)
+  }
+  const defaultBatch = await SymbolicRegressor.create({
+    strategy: 'family',
+    backend: 'polygrad',
+    population: 8,
+    eliteCount: 2,
+    generations: 1,
+    terms: 2
+  })
+  try {
+    await defaultBatch.fit([[0], [1], [2], [3]], [0, 1, 2, 3])
+    assert.deepEqual(batches, [8])
+  } finally {
+    defaultBatch.dispose()
+    FamilyScorer.create = createScorer
+  }
+
   const previous = process.env.POLY_DEV
   const envModel = await SymbolicRegressor.create({
     strategy: 'family',
@@ -106,7 +131,9 @@ async function main() {
   } finally {
     m.dispose()
   }
-  const pgModule = require(process.env.WLEARN_SYM_POLYGRAD_JS || 'polygrad')
+  const pgModule = process.env.WLEARN_SYM_POLYGRAD_JS
+    ? require(process.env.WLEARN_SYM_POLYGRAD_JS)
+    : pkgRequire('polygrad')
   const runtime = await pgModule.create({
     core: 'native'
   })
@@ -165,8 +192,6 @@ async function main() {
   } finally {
     runtime.dispose()
   }
-  const { createRequire } = require('node:module')
-  const pkgRequire = createRequire(require('node:path').resolve(__dirname, '../js/package.json'))
   const { Pipeline, load } = pkgRequire('@wlearn/core')
   const pipeline = new Pipeline([
     [
@@ -198,35 +223,46 @@ async function main() {
   }
   if (process.env.WLEARN_AUTOML_JS) {
     const { autoFit } = require(process.env.WLEARN_AUTOML_JS)
-    const result = await autoFit(
-      [
-        {
-          name: 'sym',
-          cls: SymbolicRegressor,
-          searchSpace: {},
-          params: {
-            strategy: 'family',
-            backend: 'polygrad',
-            terms: 2,
-            batchSize: 8,
-            population: 8,
-            eliteCount: 2,
-            generations: 1,
-            polygrad: { core: 'native', device: 'cpu' }
-          }
-        }
-      ],
-      X,
-      y,
-      { nIter: 1, cv: 2, task: 'regression', ensemble: false }
-    )
+    const shared = await pgModule.create({ core: 'native', device: 'cpu' })
+    let creates = 0
+    class SharedSym extends SymbolicRegressor {
+      static create(params) {
+        creates++
+        return SymbolicRegressor.create({ ...params, polygrad: shared })
+      }
+    }
+    let result
     try {
+      result = await autoFit(
+        [
+          {
+            name: 'sym',
+            cls: SharedSym,
+            searchSpace: {},
+            params: {
+              strategy: 'family',
+              backend: 'polygrad',
+              terms: 2,
+              batchSize: 8,
+              population: 8,
+              eliteCount: 2,
+              generations: 1
+            }
+          }
+        ],
+        X,
+        y,
+        { nIter: 1, cv: 2, task: 'regression', ensemble: false }
+      )
+      assert.equal(creates, 3)
+      assert.equal(shared.stats().jit.liveCount, 0)
       assert(Number.isFinite(result.bestScore))
       assert(result.model.predict(X).every(Number.isFinite))
     } finally {
-      result.model.dispose()
+      result?.model.dispose()
+      shared.dispose()
     }
-    console.log('AutoML: real asynchronous family backend, 2 folds and final refit passed')
+    console.log('AutoML: one caller-owned runtime across 2 folds and final refit passed')
   }
   console.log('family public Polygrad: regression, binary, multiclass and batched polish passed')
 }

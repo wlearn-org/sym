@@ -118,3 +118,57 @@ its Python numerical scorer delegates to the package implementation. Its isolate
 kernel timings are not complete-fit speedups. The recorded fit measurements
 precede final boundary-validation and environment-selection fixes; their explicit
 CUDA device and numerical algorithm are unchanged by those fixes.
+
+## Fresh and reused runtimes (2026-09-28 follow-up)
+
+`family-backends.py` now accepts `--batches`, `--dtypes`, `--datasets` and
+`--warm-repeats`. Each configuration reports runtime creation separately, a
+complete first fit, then complete subsequent fits sharing that runtime. Graph
+construction remains included. These are not fresh-process cold measurements.
+
+RTX3060Laptop, native single-thread C, Friedman1 seed11,4096rows,population256,
+8terms,2polish passes, independent512test rows:
+
+| Configuration | 30 generations | 120 generations |
+|---|---:|---:|
+| C |7.21s|28.57s|
+| f64,batch64,fresh |8.38s|15.71s|
+| f64,batch64,warm |2.54s|10.27s|
+| f32,batch256,fresh |6.62s|9.12s|
+| f32,batch256,warm |1.28s|4.78s|
+
+All warm fits had0runtime-cache misses. Runtime allocation itself was milliseconds;
+most of the extra first-fit cost was graph setup/compilation. f64/batch256 was
+slightly slower warm than batch64 (2.88/10.87s). The population-based default
+reduces padding on small populations and crossings on large ones; larger batches
+use more memory and are not a universal speed improvement.
+
+f64 matched C predictions in these runs. f32/batch256 maximum prediction delta
+was5.82e-5 at30generations but0.471 at120, with almost identical testR². Numeric
+perturbations change selection trajectories. Four fixed-candidate f32 numerical
+cases passed1e-5 tolerances; the large-offset/cosine case correctly rejects f32.
+Native f64 remains the default. Extended f64 offset testing also exposed a CPU
+sine-lowering error (max prediction delta0.000382); CUDA passed. Its regression
+remains failing on CPU, rather than relaxing the tolerance.
+
+`family-browser.js` reports real browser WASM C versus public WebGPU on a matched
+LCG Friedman1 dataset (different generator from the native script). At4096rows,
+256candidates,30generations,8terms,batch256: C8.30s,WebGPU fresh5.02s,warm2.97s;
+max prediction delta1.32e-4. At512rows,64candidates,10generations,4terms,batch64: C62ms,WebGPU fresh2.61s,
+warm152ms. These are browser measurements, not inferred from CUDA. Run with the
+display/Chromium setup used by browser tests:
+
+```sh
+POLY_DEV=webgpu node bench/family-browser.js --rows 4096 --population 256 --generations 30 --terms 8 --batch 256 --output browser.json
+```
+
+Raw follow-up measurements: `results/reuse-*-20260928.json`.
+
+An implicit process-global cache is not added. Repeated disposed Sym fits retain
+runtime buffers: a256row/16candidate/3term Python CUDA probe retained527488bytes
+per fit even after GC,schedule-cache clearing and collection; JS also grows.
+Standalone add,QR,custom-kernel,chained add/QR and copy/replay probes reclaim all
+buffers, so the precise owner is unresolved. A caller-owned runtime bounds its
+lifetime and supports reuse across AutoML folds via the tested class factory.
+Long-lived reuse needs the ownership issue resolved, and scorer-level reuse must
+replace data-dependent constants with dynamic inputs or include them in its key.

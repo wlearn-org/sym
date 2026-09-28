@@ -213,3 +213,31 @@ finally:
     )
     assert result.returncode != 0, result.stdout
     assert "invalid-sym-test-device" in result.stderr.lower(), result.stderr
+
+
+def test_default_batch_tracks_population(monkeypatch):
+    from wlearn_sym._family_scorer import FamilyScorer
+
+    batches = []
+    original = FamilyScorer.__init__
+
+    def record(self, X, y, validation, descriptors, **kwargs):
+        batches.append(descriptors.shape[0])
+        original(self, X, y, validation, descriptors, **kwargs)
+
+    monkeypatch.setattr(FamilyScorer, "__init__", record)
+    model = SymbolicRegressor(
+        dict(
+            strategy="family",
+            backend="polygrad",
+            population=8,
+            eliteCount=2,
+            generations=1,
+            terms=2,
+        )
+    )
+    try:
+        model.fit([[0], [1], [2], [3]], [0, 1, 2, 3])
+        assert batches == [8]
+    finally:
+        model.dispose()

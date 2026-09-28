@@ -146,3 +146,31 @@ def test_large_cosine_phase_is_rejected():
             descriptors,
             dtype="float64",
         )
+
+
+@pytest.mark.parametrize("dtype", ["float64", "float32"])
+@pytest.mark.parametrize(
+    "case", ["ordinary", "offset", "collinear", "constant", "protected"]
+)
+def test_device_precision_contract(dtype, case):
+    X, y, mask, descriptors = data(96, 8, 3, case, 123)
+    # Large cosine phases are outside the f32 contract, not a parity pass.
+    if dtype == "float32" and case == "offset":
+        with pytest.raises(FloatingPointError, match="cosine phase"):
+            ResidentScorer(X, y, mask, descriptors, dtype=dtype)
+        return
+    scorer = ResidentScorer(X, y, mask, descriptors, dtype=dtype)
+    try:
+        result = scorer.score(descriptors)
+        coef, losses, features = scorer.ref.fit(
+            X, y, mask, descriptors, 1e-8, features=True
+        )
+        expected = np.einsum("bnt,bt->bn", features, coef[:, :3]) + coef[:, 3:]
+        actual = (
+            np.einsum("bnt,bt->bn", features, result["coefficients"][:, :3])
+            + result["coefficients"][:, 3:]
+        )
+        np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
+        np.testing.assert_allclose(result["losses"], losses, rtol=1e-5, atol=1e-5)
+    finally:
+        scorer.dispose()

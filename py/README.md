@@ -72,7 +72,7 @@ built-ins. Arbitrary Python callbacks are not artifact operators.
 
 The shared C controller proposes candidates and accepts results. Polygrad
 computes features, centered/scaled QR factors and losses; C applies ridge and
-solves small triangular systems. `batchSize` (64) controls transport,
+solves small triangular systems. `batchSize` (default `min(population, 512)`) controls transport,
 `scorerDtype` defaults to float64. Precision/reduction differences can affect
 near-tied selections. Unsupported large cosine phases raise explicit errors;
 no scorer silently falls back. Small fits generally favor C because Polygrad
@@ -104,3 +104,9 @@ Run `python -m pytest py/tests test/test_cross_lang.py` from the repository.
 
 See the [repository numerical contract](https://github.com/wlearn-org/sym#family-search-and-numerical-contract)
 and LICENSE/NOTICE for semantics and licensing.
+
+A caller-owned `polygrad.create(...)` runtime can be passed as `polygrad` across
+fits. It reuses compiled kernels; dispose it after the bounded workload. The
+current local Polygrad qualification still has repeated-fit buffer retention and
+large-phase CPU float64 sine/cosine errors. See the repository runtime-reuse
+qualification and benchmark notes; float64 is not a universal exact-match guarantee.

@@ -263,7 +263,7 @@ class CFamilyEngine {
   async _fitPolygrad(X, target, options) {
     const { FamilyScorer } = require('./family-scorer.js')
     const w = getWasm()
-    const capacity = this.params.batchSize ?? this.params.batch_size ?? 64
+    const capacity = this.params.batchSize ?? this.params.batch_size ?? Math.min(options[0], 512)
     if (!Number.isInteger(capacity) || capacity < 1 || capacity > 512)
       throw new ValidationError('family batchSize must be an integer in [1,512]')
     const search = withArrays([X.data, target, options], (w, xp, yp, pp) =>

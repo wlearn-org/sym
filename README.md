@@ -88,7 +88,7 @@ Sequential polish (`polishBatchSize: 0`) evaluates dependent coordinate trials.
 Positive sizes request frozen-base batches: all active coordinate directions
 plus random multi-parameter proposals, followed by selection. The actual round
 size is at least the coordinate-trial count. This changes the polish policy;
-transport `batchSize` (1–512, default 64) does not change proposal/RNG order.
+transport `batchSize` (1–512, default `min(population, 512)`) does not change proposal/RNG order.
 
 C fits readouts using centered/scaled double Givens QR for
 `mean_squared_error + ridge * sum(coef²)`, with an unpenalized intercept.
@@ -207,3 +207,43 @@ rows. `bench/scorer/` measures fixed-candidate numerical/steady-state behavior;
 its timings exclude parts of estimator fitting and are not end-to-end speedups.
 Historical experiments under sibling `symcpg` and `sympg` are reference evidence,
 not product benchmark results. C remains the default, especially for small fits.
+
+## Runtime reuse qualification
+
+Pass a caller-owned Polygrad runtime to reuse its compiled-kernel cache across
+fits; dispose that runtime at the end of the bounded workload. Current scorers
+are rebuilt for each fit. A device/dtype/shape-only scorer cache is insufficient:
+normalization graphs also capture the target mean, training count and anchor row.
+
+AutoML candidate parameters must remain portable JSON. Inject the runtime through
+the estimator factory, outside the candidate parameters:
+
+```js
+const pg = require('polygrad/async')
+const { autoFit } = require('@wlearn/automl')
+const runtime = await pg.createAsync({ core: 'native', device: 'cuda' })
+class SharedSym extends SymbolicRegressor {
+  static create(params) {
+    return SymbolicRegressor.create({ ...params, polygrad: runtime })
+  }
+}
+let result
+try {
+  result = await autoFit([{
+    name: 'sym', cls: SharedSym, searchSpace: {},
+    params: { strategy: 'family', backend: 'polygrad', terms: 4,
+      population: 32, generations: 10 }
+  }], X, y, { nIter: 1, cv: 2, task: 'regression', ensemble: false })
+  const predictions = result.model.predict(Xtest)
+} finally {
+  result?.model.dispose()
+  runtime.dispose()
+}
+```
+
+Current local Polygrad qualification has two open findings: repeated fits retain
+buffers until the runtime is disposed, and native CPU float64 sine/cosine loses
+accuracy at large phases. The extended offset regression fails on CPU; CUDA
+passes it. Do not treat runtime reuse as an unbounded process-global cache or
+float64 as a universal exact-match guarantee. See `bench/README.md` for measured
+fresh/warm behavior, precision differences and the retained-buffer reproducer.

@@ -1,5 +1,22 @@
 'use strict'
 
+const { BackendError } = require('@wlearn/core')
+
+function checkRuntime(runtime) {
+  if (
+    typeof runtime?.Tensor?.prototype?.dispose !== 'function' ||
+    typeof runtime?.Tensor?.prototype?.copyFromAsync !== 'function' ||
+    typeof runtime?.Model?.fromCallableAsync !== 'function' ||
+    typeof runtime?.compileAsync !== 'function' ||
+    typeof runtime?.uop?.KernelInfo !== 'function'
+  ) {
+    throw new BackendError(
+      'Sym requires the Polygrad 0.6 Model, compiled-stage and disposable Tensor APIs; install polygrad >=0.6.0 <0.7.0 or pass a compatible runtime'
+    )
+  }
+  return runtime
+}
+
 function requirePolygrad() {
   if (typeof process !== 'undefined' && process.env && process.env.WLEARN_SYM_POLYGRAD_JS) {
     return require(process.env.WLEARN_SYM_POLYGRAD_JS + '/src/index.async.js')
@@ -11,9 +28,18 @@ async function loadPolygrad(options) {
   if (options && typeof options.then === 'function') {
     return loadPolygrad(await options)
   }
-  if (options && options.Tensor) return options
+  if (options && options.Tensor) return checkRuntime(options)
   // Construction is already asynchronous; let Polygrad resolve options and env.
-  return requirePolygrad().createAsync(options)
+  const pg = requirePolygrad()
+  if (typeof pg.createAsync !== 'function')
+    throw new BackendError('Sym requires the Polygrad 0.6 async construction API')
+  const runtime = await pg.createAsync(options)
+  try {
+    return checkRuntime(runtime)
+  } catch (error) {
+    runtime.dispose()
+    throw error
+  }
 }
 
 function normalizeXForPolygrad(X, nFeatures) {

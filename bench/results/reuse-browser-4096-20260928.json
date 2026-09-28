@@ -1,0 +1,50 @@
+{
+  "environment": {
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+    "device": "webgpu",
+    "caps": {
+      "simd": true,
+      "f16": false,
+      "f64": false,
+      "core": "wasm",
+      "device": "webgpu"
+    }
+  },
+  "settings": {
+    "rows": 4096,
+    "population": 256,
+    "generations": 30,
+    "terms": 8,
+    "batch": 256,
+    "seed": 11,
+    "output": "../temp/runs/20260928-sym-performance/browser-4096.json"
+  },
+  "dataset": "Friedman1, LCG seed+1000; sequential independent train/test rows",
+  "timing": "Complete create+fit including first Sym WASM startup. Fresh includes public Polygrad runtime creation; warm reuses runtime; both rebuild scorers. Same process/driver caches may persist.",
+  "results": [
+    {
+      "phase": "wasm-c",
+      "fit_ms": 8298.10000000149,
+      "runtime_create_ms": 0,
+      "total_ms": 8298.10000000149,
+      "test_r2": 0.9091552745747715,
+      "max_prediction_delta_from_c": 0
+    },
+    {
+      "phase": "webgpu-fresh",
+      "fit_ms": 4924,
+      "runtime_create_ms": 94.5,
+      "total_ms": 5018.5,
+      "test_r2": 0.9091553674800399,
+      "max_prediction_delta_from_c": 0.0001316070556640625
+    },
+    {
+      "phase": "webgpu-warm",
+      "fit_ms": 2969.60000000149,
+      "runtime_create_ms": 0,
+      "total_ms": 2969.60000000149,
+      "test_r2": 0.9091553674800399,
+      "max_prediction_delta_from_c": 0.0001316070556640625
+    }
+  ]
+}

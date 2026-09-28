@@ -79,7 +79,7 @@ inputs or earlier terms. `operatorSet` accepts basic/smooth/full or a list;
 `operators` accepts a subset of the ten portable built-ins.
 
 Polygrad evaluates features, QR and losses for every candidate. C owns the
-search and small regularized triangular solves. `batchSize` (default 64) is a
+search and small regularized triangular solves. `batchSize` (default `min(population, 512)`) is a
 transport setting; `scorerDtype` selects float32/float64 where supported. Native
 CPU/CUDA defaults to float64; WebGPU uses float32. Numerical differences may
 change near-tied selections; large unsupported cosine phases raise errors.
@@ -112,3 +112,8 @@ builds. Run `npm test`, `npm run test:types`, `npm run test:polygrad`, and
 
 See the [repository numerical contract](https://github.com/wlearn-org/sym#family-search-and-numerical-contract)
 and LICENSE/NOTICE for semantics and licensing.
+
+Runtime reuse, including the validated AutoML factory recipe and current local
+Polygrad buffer-retention/CPU transcendental limitations, is documented in the
+[repository qualification](https://github.com/wlearn-org/sym#runtime-reuse-qualification).
+Old runtimes fail early with a Polygrad 0.6 API requirement, before tensors are allocated.

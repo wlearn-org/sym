@@ -78,7 +78,7 @@ function makeRegression(n) {
     eliteCount: 2,
     frontierSize: 3,
     seed: 20260705,
-    polygrad: { core: 'wasm', device: 'auto' }
+    polygrad: { core: 'wasm', device: 'cpu' }
   })
   await model.fit(X, y)
   const pred = Array.from(await model.predict(X))
@@ -105,7 +105,7 @@ const { SymbolicRegressor } = require('./js/src');
 
 def _run_node(code, tmp):
     env = os.environ.copy()
-    local_pg = Path(__file__).parents[3] / "polygrad" / "polygrad" / "js" / "src"
+    local_pg = Path(__file__).parents[3] / "polygrad" / "polygrad" / "js"
     if local_pg.exists():
         env.setdefault("WLEARN_SYM_POLYGRAD_JS", str(local_pg))
     subprocess.run(
