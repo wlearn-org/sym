@@ -6,8 +6,8 @@ JavaScript and Python provide wlearn lifecycle/artifacts and optional execution
 through Polygrad's public frontends. No private CUDA API or direct link to
 Polygrad's C core is required.
 
-This is an unreleased 0.1.0 candidate using local Polygrad 0.6. Publication and
-fixed published dependency pins follow Polygrad's release qualification.
+Optional accelerated execution requires published Polygrad **0.6.0**.
+The default C backend does not require Polygrad.
 
 ## Strategies and backends
 
@@ -33,10 +33,8 @@ the fitted model. Failed refits preserve the previous fitted model.
 ```js
 const { SymbolicRegressor } = require('@wlearn/sym')
 const model = await SymbolicRegressor.create({
-  strategy: 'family', backend: 'polygrad',
-  terms: 6, population: 128, generations: 20, seed: 42,
-  polishPasses: 2, polishBatchSize: 32, hierarchical: true,
-  polygrad: { core: 'native', device: 'cuda' }
+  strategy: 'family', backend: 'c',
+  terms: 6, population: 128, generations: 20, seed: 42
 })
 await model.fit(X, y)
 const predictions = model.predict(Xtest)
@@ -46,15 +44,14 @@ const bytes = model.save()
 ```python
 from wlearn_sym import SymbolicRegressor
 model = SymbolicRegressor({
-    "strategy": "family", "backend": "polygrad", "seed": 42,
-    "polishPasses": 2, "polishBatchSize": 32, "hierarchical": True,
-    "polygrad": {"device": "CUDA"},
+    "strategy": "family", "backend": "c", "seed": 42,
 }).fit(X, y)
 predictions = model.predict(Xtest)
 bytes_ = model.save()
 ```
 
-Use `backend: 'c'` without installing Polygrad. For browser WebGPU, select
+For accelerated training, install Polygrad and set `backend: 'polygrad'` with
+`polygrad: { core: 'native', device: 'cuda' }` (Python: `{'device': 'CUDA'}`). For browser WebGPU, select
 `polygrad: { core: 'wasm', device: 'webgpu' }`; Sym loads Polygrad's public async
 frontend. Caller-supplied runtimes (`polygrad: runtime` or `polygradRuntime`) are
 borrowed, including runtimes shared with another wlearn model. Sym disposes its
@@ -165,7 +162,7 @@ propose/score/accept/finish/free plus a compact QR-results protocol. Candidate
 batches are bounded at 512, row tiles at 4096. Invalid acceptance is atomic;
 borrowed views must be copied before awaiting or growing Wasm memory. Finishing
 transfers the model once; freeing a search cancels it. Sequential and batched
-polish use the same C state machine. These low-level APIs remain unreleased.
+polish use the same C state machine. These low-level APIs are intended for custom scoring integrations.
 
 The C fit driver's feature cache is capped at 8 MiB, using 8-candidate chunks
 and a bounded row tile. Uncached suffixes are recomputed; cache allocation
@@ -241,9 +238,14 @@ try {
 }
 ```
 
-Current local Polygrad qualification has two open findings: repeated fits retain
-buffers until the runtime is disposed, and native CPU float64 sine/cosine loses
-accuracy at large phases. The extended offset regression fails on CPU; CUDA
-passes it. Do not treat runtime reuse as an unbounded process-global cache or
-float64 as a universal exact-match guarantee. See `bench/README.md` for measured
-fresh/warm behavior, precision differences and the retained-buffer reproducer.
+Polygrad 0.6.0 fixes the earlier repeated-fit graph retention and CPU float64
+sine failure; the offset regression passes on CPU and CUDA. Runtime schedule
+caches can still retain device storage, so keep their lifetimes bounded.
+Large-phase cosine and gradient accuracy remain limitations of the optional
+backend. Saved models predict with the C evaluator. Float64 is not a universal
+exact-match guarantee; see `bench/README.md` for the measured precision limits.
+
+Hierarchical division can produce very large conservative feature bounds even
+from bounded input data. With Polygrad and trigonometric operators, this can
+trigger the cosine precision guard during search. Use the default flat family
+or the C backend for those searches; the error does not silently change backends.

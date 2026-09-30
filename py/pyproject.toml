@@ -10,14 +10,14 @@ readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{name = "Anton Zemlyansky"}]
-requires-python = ">=3.9"
-dependencies = ["numpy>=1.22", "wlearn>=0.1.0"]
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.22", "wlearn>=0.3.0,<0.4"]
 keywords = ["symbolic-regression", "symbolic-classification", "formula", "machine-learning", "wlearn", "polygrad"]
 
 [project.optional-dependencies]
-polygrad = ["polygrad>=0.6.0,<0.7"]
+polygrad = ["polygrad==0.6.0"]
 verify = ["z3-solver<4.15.4"]
-all = ["polygrad>=0.6.0,<0.7", "z3-solver<4.15.4"]
+all = ["polygrad==0.6.0", "z3-solver<4.15.4"]
 
 [project.urls]
 Homepage = "https://wlearn.org"

@@ -4,12 +4,11 @@ Symbolic regression, classification and formula features for Node and browsers.
 C11 search runs through WebAssembly. Optional Polygrad scoring uses its public
 frontend, sharing a caller-supplied runtime when desired.
 
-Unreleased 0.1.0 candidate; use the local Polygrad 0.6 checkout until publication.
-After publication:
+Install Sym, then add Polygrad if you need accelerated scoring:
 
 ```sh
 npm install @wlearn/sym
-npm install polygrad  # optional
+npm install polygrad@0.6.0  # optional
 ```
 
 ```js
@@ -57,7 +56,7 @@ save and dispose remain synchronous and require no Polygrad. Explicit
 const accelerated = await SymbolicRegressor.create({
   strategy: 'family', backend: 'polygrad',
   terms: 6, seed: 42, validationFraction: 0.2,
-  hierarchical: true, polishPasses: 2, polishBatchSize: 32,
+  hierarchical: false, polishPasses: 2, polishBatchSize: 32,
   polygrad: { core: 'native', device: 'cuda' }
 })
 await accelerated.fit(X, y)
@@ -113,7 +112,12 @@ builds. Run `npm test`, `npm run test:types`, `npm run test:polygrad`, and
 See the [repository numerical contract](https://github.com/wlearn-org/sym#family-search-and-numerical-contract)
 and LICENSE/NOTICE for semantics and licensing.
 
-Runtime reuse, including the validated AutoML factory recipe and current local
-Polygrad buffer-retention/CPU transcendental limitations, is documented in the
+Runtime reuse, the AutoML factory recipe and remaining numerical/cache
+limits are documented in the
 [repository qualification](https://github.com/wlearn-org/sym#runtime-reuse-qualification).
 Old runtimes fail early with a Polygrad 0.6 API requirement, before tensors are allocated.
+
+Hierarchical division can produce very large conservative feature bounds even
+from bounded input data. With Polygrad and trigonometric operators, this can
+trigger the cosine precision guard during search. Use the default flat family
+or the C backend for those searches; the error does not silently change backends.

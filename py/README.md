@@ -4,7 +4,7 @@ Python bindings for symbolic regression, classification and formula features.
 The C11 core owns search and portable fitted models. Optional Polygrad execution
 uses its public Python frontend; importing `wlearn_sym` does not import Polygrad.
 
-Unreleased 0.1.0 candidate using local Polygrad 0.6 until publication. Afterwards:
+The optional Polygrad backend uses version **0.6.0**.
 
 ```sh
 pip install wlearn-sym
@@ -50,7 +50,7 @@ classes. Family search supports regression/classification with either `c` or
 ```python
 accelerated = SymbolicRegressor({
     "strategy": "family", "backend": "polygrad", "seed": 42,
-    "validationFraction": .2, "hierarchical": True,
+    "validationFraction": .2, "hierarchical": False,
     "polishPasses": 2, "polishBatchSize": 32,
     "polygrad": {"device": "CUDA"},
 }).fit(X, y)
@@ -106,7 +106,10 @@ See the [repository numerical contract](https://github.com/wlearn-org/sym#family
 and LICENSE/NOTICE for semantics and licensing.
 
 A caller-owned `polygrad.create(...)` runtime can be passed as `polygrad` across
-fits. It reuses compiled kernels; dispose it after the bounded workload. The
-current local Polygrad qualification still has repeated-fit buffer retention and
-large-phase CPU float64 sine/cosine errors. See the repository runtime-reuse
-qualification and benchmark notes; float64 is not a universal exact-match guarantee.
+fits. It reuses compiled kernels; dispose it after the bounded workload. See the repository runtime-reuse qualification for schedule-cache retention
+and large-phase cosine limits; float64 is not a universal exact-match guarantee.
+
+Hierarchical division can produce very large conservative feature bounds even
+from bounded input data. With Polygrad and trigonometric operators, this can
+trigger the cosine precision guard during search. Use the default flat family
+or the C backend for those searches; the error does not silently change backends.
