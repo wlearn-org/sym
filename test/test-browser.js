@@ -50,10 +50,22 @@ function chromiumExecutablePath(chromium) {
   return undefined
 }
 
-async function runIifeTest(page, bundle, exportKeys, origin) {
+async function runBundleTest(page, bundle, exportKeys, origin) {
   await page.goto(origin)
   await page.setContent('<!DOCTYPE html><html><body></body></html>', { waitUntil: 'load' })
-  await page.addScriptTag({ path: path.join(ROOT, bundle.file) })
+  if (bundle.type === 'iife') {
+    await page.addScriptTag({ path: path.join(ROOT, bundle.file) })
+  } else {
+    const source = fs.readFileSync(path.join(ROOT, bundle.file), 'utf8')
+    await page.evaluate(async ({ source, name }) => {
+      const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }))
+      try {
+        window[name] = await import(url)
+      } finally {
+        URL.revokeObjectURL(url)
+      }
+    }, { source, name: bundle.global })
+  }
   await page.evaluate(
     ({ globalName, exports, device }) => {
       window.__testResult = (async () => {
@@ -160,31 +172,6 @@ async function runIifeTest(page, bundle, exportKeys, origin) {
   )
 }
 
-async function runEsmTest(page, bundle, exportKeys) {
-  await page.setContent('<!DOCTYPE html><html><body></body></html>', { waitUntil: 'load' })
-  const bundleCode = fs.readFileSync(path.join(ROOT, bundle.file), 'utf8')
-  const checks = exportKeys
-    .map(k => `${JSON.stringify(k)}: typeof ${k} !== 'undefined'`)
-    .join(',\n          ')
-  await page.addScriptTag({
-    type: 'module',
-    content: `${bundleCode}
-window.__testResult = (async () => {
-  try {
-    const checks = {
-          ${checks}
-    }
-    const missing = Object.keys(checks).filter(k => !checks[k])
-    if (missing.length) return { ok: false, error: 'missing exports: ' + missing.join(', ') }
-    return { ok: true, exports: Object.keys(checks).length }
-  } catch (e) {
-    return { ok: false, error: e.message, stack: e.stack }
-  }
-})()
-`
-  })
-}
-
 async function launchBrowser() {
   const chromium = loadChromium()
   return chromium.launch({
@@ -212,7 +199,7 @@ async function launchBrowser() {
 async function main() {
   const bundles = [
     { name: 'IIFE', file: `dist/${NAME}.js`, type: 'iife', global: NAME },
-    { name: 'ESM', file: `dist/${NAME}.mjs`, type: 'esm' }
+    { name: 'ESM', file: `dist/${NAME}.mjs`, type: 'esm', global: NAME }
   ]
   const server = http.createServer((req, res) => res.end('<!doctype html><html></html>'))
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -224,8 +211,7 @@ async function main() {
   try {
     for (const b of bundles) {
       const page = await browser.newPage()
-      if (b.type === 'iife') await runIifeTest(page, b, EXPORTS, origin)
-      else await runEsmTest(page, b, EXPORTS)
+      await runBundleTest(page, b, EXPORTS, origin)
       await page.waitForFunction(() => window.__testResult, { timeout: 30000 })
       const result = await page.evaluate(() => window.__testResult)
       if (result && result.ok) {
