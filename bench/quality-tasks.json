@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "data_seed": 20261002,
+  "description": "Fixed screening tasks, not a representative SRBench result. Formulas generate data only and are never supplied to an estimator.",
+  "tasks": [
+    {"id": "linear", "function": "linear"},
+    {"id": "linear-noisy", "function": "linear", "noise": 0.1},
+    {"id": "product", "function": "product"},
+    {"id": "product-noisy", "function": "product", "noise": 0.1},
+    {"id": "sine", "function": "sine"},
+    {"id": "sine-noisy", "function": "sine", "noise": 0.1},
+    {"id": "sine-rescaled-input", "function": "sine", "input_scale": 0.01},
+    {"id": "sine-irrelevant", "function": "sine", "columns": 20},
+    {"id": "sine-extrapolation", "function": "sine", "test_range": 2},
+    {"id": "decay", "function": "decay"},
+    {"id": "decay-noisy", "function": "decay", "noise": 0.1},
+    {"id": "logarithmic", "function": "logarithmic"},
+    {"id": "logarithmic-noisy", "function": "logarithmic", "noise": 0.1},
+    {"id": "rational", "function": "rational"},
+    {"id": "rational-noisy", "function": "rational", "noise": 0.1},
+    {"id": "composed", "function": "composed"},
+    {"id": "composed-noisy", "function": "composed", "noise": 0.1},
+    {"id": "friedman1", "function": "friedman1"},
+    {"id": "friedman1-noisy", "function": "friedman1", "noise": 0.1},
+    {"id": "linear-offset", "function": "linear", "input_offset": 1000000},
+    {"id": "linear-collinear", "function": "linear", "collinear": true},
+    {"id": "sine-small-target", "function": "sine", "target_scale": 0.001},
+    {"id": "sine-large-target", "function": "sine", "target_scale": 1000},
+    {"id": "diabetes", "function": "diabetes", "source": "sklearn.datasets.load_diabetes; original dataset attribution supplied by scikit-learn"}
+  ]
+}

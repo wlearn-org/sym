@@ -22,6 +22,22 @@ const p = {
   polishPasses: 2
 }
 async function main() {
+  const refined = await SymbolicRegressor.create({
+    strategy: 'family', population: 16, eliteCount: 4, generations: 4, terms: 3,
+    polishPasses: 2, polishBatchSize: 16, localRefineInterval: 1, localRefineCount: 2
+  })
+  const refineX = Array.from({ length: 64 }, (_, i) => [i / 32 - 1, Math.cos(i)])
+  const refineY = refineX.map(([x, z]) => Math.sin(2.3 * x + 0.4) + 0.2 * z)
+  let roundtrip
+  try {
+    assert.equal(refined.fit(refineX, refineY), refined)
+    roundtrip = await load(refined.save())
+    assert.deepEqual(roundtrip.predict(refineX), refined.predict(refineX))
+    assert.equal(roundtrip.getParams().localRefineCount, 2)
+  } finally {
+    refined.dispose()
+    roundtrip?.dispose()
+  }
   const X = Array.from({ length: 60 }, (_, i) => [(i - 30) / 10, Math.sin(i * 0.47)])
   const y = X.map(([a, b]) => 2 * a + 0.3 * b + 1)
   for (const params of [

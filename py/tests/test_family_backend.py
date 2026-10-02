@@ -25,6 +25,8 @@ def test_shared_search_polygrad(classes, hierarchical):
         seed=11,
         validationFraction=0.2,
         hierarchical=hierarchical,
+        localRefineInterval=1,
+        localRefineCount=2,
     )
     c, pg = (
         cls(params),

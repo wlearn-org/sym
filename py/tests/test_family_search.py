@@ -4,10 +4,62 @@ import numpy as np
 import pytest
 
 from wlearn_sym._ffi import get_lib
+from wlearn_sym import SymbolicRegressor
+
+
+def test_family_in_search_refinement_roundtrip():
+    rng = np.random.default_rng(51)
+    X = rng.uniform(-1, 1, (96, 3))
+    y = np.sin(2.3 * X[:, 0] + 0.4) + X[:, 1] * X[:, 2]
+    model = SymbolicRegressor(
+        dict(
+            strategy="family",
+            population=16,
+            generations=4,
+            terms=3,
+            eliteCount=4,
+            seed=11,
+            validationFraction=0.2,
+            polishPasses=2,
+            polishBatchSize=16,
+            localRefineInterval=1,
+            localRefineCount=2,
+        )
+    )
+    loaded = None
+    try:
+        model.fit(X, y)
+        loaded = SymbolicRegressor.load(model.save())
+        np.testing.assert_array_equal(model.predict(X), loaded.predict(X))
+        assert np.isfinite(model.predict(X)).all()
+    finally:
+        model.dispose()
+        if loaded:
+            loaded.dispose()
 
 
 def ptr(a):
     return a.ctypes.data_as(ct.POINTER(ct.c_double))
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        dict(localRefineInterval=1),
+        dict(localRefineCount=1),
+        dict(localRefineInterval=1, localRefineCount=33),
+        dict(localRefineInterval=1.5, localRefineCount=1),
+        dict(localRefineInterval=-1, localRefineCount=1),
+        dict(localRefineInterval=1, localRefineCount=1, polishPasses=0),
+    ],
+)
+def test_invalid_family_refinement_configuration(options):
+    model = SymbolicRegressor({"strategy": "family", "polishPasses": 1, **options})
+    try:
+        with pytest.raises(ValueError, match="family"):
+            model.fit(np.arange(12).reshape(6, 2), np.arange(6))
+    finally:
+        model.dispose()
 
 
 @pytest.mark.parametrize("classes", [0, 2, 3])

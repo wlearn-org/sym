@@ -309,12 +309,24 @@ struct sym_family_search {
     candidate polish_base;
     double target_mean;
     int32_t polish_pass, polish_term, polish_param, polish_sign, polish_improved;
+    int32_t local_refine_interval, local_refine_count;
+    int32_t refined, refining, refine_index, refine_count, refine_slots[32];
     double best, polish_step;
     uint32_t rng, serial;
     uint64_t evaluations;
     enum family_phase phase;
     sym_family_batch_t batch;
 };
+
+int sym_family_search_set_refinement(sym_family_search_t *s, int32_t interval, int32_t count) {
+    if (!s || s->serial || interval < 0 || count < 0 || count > 32 ||
+        count > s->params.population || ((interval == 0) != (count == 0)) ||
+        (count && !s->params.polish))
+        return fail("invalid family refinement configuration or search already started");
+    s->local_refine_interval = interval;
+    s->local_refine_count = count;
+    return 0;
+}
 
 static double family_target(const sym_family_search_t *s, int row) {
     if (!s->model->classes)
@@ -373,6 +385,7 @@ static void family_start_head(sym_family_search_t *s) {
         s->population[i].ordinal = i;
     }
     s->generation = s->cursor = s->stale = 0;
+    s->refined = s->refining = 0;
     s->best = DBL_MAX;
     s->phase = FAMILY_POPULATION;
 }
@@ -516,6 +529,58 @@ static void family_finish_head(sym_family_search_t *s) {
     else
         family_start_head(s);
 }
+static void family_begin_polish(sym_family_search_t *s, const candidate *base) {
+    s->selected = *base;
+    s->phase = FAMILY_POLISH;
+    s->polish_pass = s->polish_term = s->polish_param = s->polish_improved = 0;
+    s->polish_sign = -1;
+    s->polish_step = .75;
+    s->polish_cursor = 0;
+}
+/* Select slots without sorting the population: sorting across island boundaries
+ * would silently change breeding membership. Exact duplicate genes get one slot. */
+static int family_begin_refinement(sym_family_search_t *s) {
+    s->refine_count = s->refine_index = 0;
+    while (s->refine_count < s->local_refine_count) {
+        int best = -1;
+        for (int i = 0; i < s->params.population; i++) {
+            candidate *c = &s->population[i];
+            if (c->objective == DBL_MAX)
+                continue;
+            int seen = 0;
+            for (int j = 0; j < s->refine_count; j++)
+                if (same_genes(c, &s->population[s->refine_slots[j]], s->params.terms)) {
+                    seen = 1;
+                    break;
+                }
+            if (!seen && (best < 0 || compare(c, &s->population[best]) < 0))
+                best = i;
+        }
+        if (best < 0)
+            break;
+        s->refine_slots[s->refine_count++] = best;
+    }
+    s->refined = 1;
+    if (!s->refine_count)
+        return 0;
+    s->refining = 1;
+    family_begin_polish(s, &s->population[s->refine_slots[0]]);
+    return 1;
+}
+static void family_finish_polish(sym_family_search_t *s) {
+    if (!s->refining) {
+        family_finish_head(s);
+        return;
+    }
+    s->population[s->refine_slots[s->refine_index]] = s->selected;
+    archive_candidate(s->model, s->head, &s->selected);
+    if (++s->refine_index < s->refine_count)
+        family_begin_polish(s, &s->population[s->refine_slots[s->refine_index]]);
+    else {
+        s->refining = 0;
+        s->phase = FAMILY_POPULATION;
+    }
+}
 /* Each batch-polish round freezes its base across all transport chunks. This
  * preserves the proposal stream and chosen winner when CPU/GPU capacities differ.
  * Unlike sequential coordinate polish, no accepted trial changes this round. */
@@ -577,6 +642,13 @@ static int family_next_work(sym_family_search_t *s) {
                 return family_begin_work(s) + 1;
             if (!s->model->counts[s->head])
                 return fail("no finite family candidate; rescale input data or change operators");
+            /* Last-generation polish already runs below. Earlier improvements
+             * must enter the population before breeding, through the same scorer. */
+            if (!s->refined && s->local_refine_interval &&
+                s->generation + 1 < s->params.generations &&
+                (s->generation + 1) % s->local_refine_interval == 0 &&
+                family_begin_refinement(s))
+                continue;
             double loss = s->model->archive[(size_t)s->head * s->params.frontier].objective;
             if (loss + s->params.tol < s->best) {
                 s->best = loss;
@@ -585,12 +657,7 @@ static int family_next_work(sym_family_search_t *s) {
                 s->stale++;
             if (s->generation + 1 == s->params.generations ||
                 (s->params.patience > 0 && s->stale >= s->params.patience)) {
-                s->selected = s->model->archive[(size_t)s->head * s->params.frontier];
-                s->phase = FAMILY_POLISH;
-                s->polish_pass = s->polish_term = s->polish_param = s->polish_improved = 0;
-                s->polish_sign = -1;
-                s->polish_step = .75;
-                s->polish_cursor = 0;
+                family_begin_polish(s, &s->model->archive[(size_t)s->head * s->params.frontier]);
             } else {
                 evolve(s->population, s->offspring, &s->rng, s->cols, s->generation, &s->params);
                 candidate *tmp = s->population;
@@ -598,12 +665,13 @@ static int family_next_work(sym_family_search_t *s) {
                 s->offspring = tmp;
                 s->generation++;
                 s->cursor = 0;
+                s->refined = 0;
             }
         } else if (s->phase == FAMILY_POLISH) {
             if (s->params.polish_batch) {
                 if (family_polish_batch(s))
                     return 1;
-                family_finish_head(s);
+                family_finish_polish(s);
                 continue;
             }
             while (s->polish_pass < s->params.polish) {
@@ -627,7 +695,7 @@ static int family_next_work(sym_family_search_t *s) {
                 s->count = 1;
                 return family_begin_work(s) + 1;
             }
-            family_finish_head(s);
+            family_finish_polish(s);
         }
     }
     return 0;
@@ -891,11 +959,21 @@ sym_family_model_t *sym_family_search_finish(sym_family_search_t *s) {
 }
 sym_family_model_t *sym_family_fit(const double *X, int32_t rows, int32_t cols, const double *y,
                                    int32_t task, int32_t classes, const sym_family_params_t *p) {
+    return sym_family_fit_refined(X, rows, cols, y, task, classes, p, 0, 0);
+}
+sym_family_model_t *sym_family_fit_refined(const double *X, int32_t rows, int32_t cols,
+                                           const double *y, int32_t task, int32_t classes,
+                                           const sym_family_params_t *p, int32_t interval,
+                                           int32_t count) {
     enum { FIT_CANDIDATES = 8, FIT_TILE_ROWS = 128 };
     sym_family_search_t *s =
         sym_family_search_new(X, rows, cols, y, task, classes, p, FIT_CANDIDATES, FIT_TILE_ROWS);
     if (!s)
         return NULL;
+    if (sym_family_search_set_refinement(s, interval, count)) {
+        sym_family_search_free(s);
+        return NULL;
+    }
     /* Size all storage from the accepted search shape, never a second default. */
     const size_t row_values = (size_t)s->capacity * s->params.terms;
     const size_t tile_rows = (size_t)s->tile_rows;

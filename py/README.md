@@ -113,3 +113,13 @@ Hierarchical division can produce very large conservative feature bounds even
 from bounded input data. With Polygrad and trigonometric operators, this can
 trigger the cosine precision guard during search. Use the default flat family
 or the C backend for those searches; the error does not silently change backends.
+
+
+### In-loop family polish
+
+Optional `localRefineInterval` and `localRefineCount` run family polish before
+breeding every interval. Both default to zero; enable both with `polishPasses > 0`.
+Count is at most `min(population, 32)`. Final polish still runs once; the last
+generation does not also receive in-loop polish. Both scorers use the same C
+proposal schedule and QR readout refits. This is an experimental coordinate
+polish schedule, not an established general quality improvement.

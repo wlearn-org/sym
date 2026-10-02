@@ -38,10 +38,12 @@ static double reference_term(const double *d, const double *row, const double *p
     }
 }
 static char *drive(const double *X, const double *y, int train_rows, int classes,
-                   sym_family_params_t *p, int capacity, int rows, int32_t *size) {
+                           sym_family_params_t *p, int capacity, int rows, int interval,
+                           int refine_count, int32_t *size) {
     sym_family_search_t *s =
         sym_family_search_new(X, train_rows, 3, y, classes > 0, classes, p, capacity, rows);
     CHECK(s);
+    CHECK(sym_family_search_set_refinement(s, interval, refine_count) == 0);
     CHECK(sym_family_search_finish(s) == NULL);
     double *features = malloc((size_t)capacity * rows * p->terms * sizeof(double));
     CHECK(features);
@@ -114,7 +116,7 @@ static void cache_boundaries(void) {
         char *actual;
         int32_t n, expected_n;
         CHECK(sym_family_save(m, &actual, &n) == 0);
-        char *expected = drive(X, y, counts[i], 0, &p, 8, 128, &expected_n);
+        char *expected = drive(X, y, counts[i], 0, &p, 8, 128, 0, 0, &expected_n);
         CHECK(n == expected_n && memcmp(actual, expected, n) == 0);
         sym_free_buffer(actual);
         sym_free_buffer(expected);
@@ -123,7 +125,49 @@ static void cache_boundaries(void) {
     free(X);
     free(y);
 }
+static void refinement_schedule(void) {
+    double X[48], y[48], values[8 * 48];
+    for (int i = 0; i < 48; i++) {
+        X[i] = (i - 24) / 24.;
+        y[i] = sin(2.3 * X[i] + .4);
+    }
+    sym_family_params_t p;
+    sym_family_params_init(&p);
+    p.population = 8;
+    p.elite = 2;
+    p.generations = 3;
+    p.terms = 1;
+    p.operators = 1u << 4; /* Every candidate has two active nonlinear parameters. */
+    p.polish = 1;
+    p.polish_batch = 4;
+    sym_family_search_t *s = sym_family_search_new(X, 48, 1, y, 0, 0, &p, 8, 48);
+    CHECK(s);
+    CHECK(sym_family_search_set_refinement(s, 1, 2) == 0);
+    CHECK(sym_family_search_set_refinement(s, 0, 2) == -1);
+    CHECK(sym_family_search_set_refinement(s, 1, 33) == -1);
+    const sym_family_batch_t *b;
+    int rc, saw_next_generation = 0;
+    while ((rc = sym_family_search_propose(s, &b)) > 0) {
+        CHECK(sym_family_search_set_refinement(s, 0, 0) == -1);
+        if (b->generation == 1 && !saw_next_generation) {
+            /* Eight initial fits plus four trials for each of two parents,
+             * completed before the first offspring generation is evaluated. */
+            CHECK(sym_family_search_evaluations(s) == 16);
+            saw_next_generation = 1;
+        }
+        int n = b->candidates * b->rows;
+        CHECK(sym_family_search_score(s, b->id, values, n) == 0);
+        CHECK(sym_family_search_accept(s, b->id, values, n) == 0);
+    }
+    CHECK(rc == 0 && saw_next_generation);
+    CHECK(sym_family_search_evaluations(s) == 40);
+    sym_family_model_t *m = sym_family_search_finish(s);
+    CHECK(m);
+    sym_family_free(m);
+    sym_family_search_free(s);
+}
 int main(void) {
+    refinement_schedule();
     double X[180], y[60];
     for (int i = 0; i < 60; i++) {
         X[3 * i] = (i - 30) / 10.;
@@ -155,7 +199,7 @@ int main(void) {
             for (int mode = 0; mode < 3; mode++) {
                 int32_t n;
                 char *bytes =
-                    drive(X, y, 60, classes, &p, mode == 0 ? 1 : 7, mode == 1 ? 17 : 60, &n);
+                    drive(X, y, 60, classes, &p, mode == 0 ? 1 : 7, mode == 1 ? 17 : 60, 0, 0, &n);
                 CHECK(n == length && memcmp(bytes, baseline, n) == 0);
                 sym_free_buffer(bytes);
             }
@@ -197,6 +241,29 @@ int main(void) {
             sym_family_free(loaded);
             sym_family_free(m);
         }
+        /* In-loop polish must use the same proposal/accept path at every tile
+         * size, including classification heads, hierarchy and multiple islands. */
+        for (int batch = 0; batch < 2; batch++) {
+            p.polish = 2;
+            p.polish_batch = batch ? 16 : 0;
+            p.hierarchical = batch;
+            p.islands = 2;
+            int32_t a, b;
+            char *one = drive(X, y, 60, classes, &p, 1, 17, 1, 2, &a);
+            char *many = drive(X, y, 60, classes, &p, 7, 60, 1, 2, &b);
+            CHECK(a == b && memcmp(one, many, a) == 0);
+            sym_family_model_t *direct =
+                sym_family_fit_refined(X, 60, 3, y, classes > 0, classes, &p, 1, 2);
+            CHECK(direct);
+            char *bytes;
+            CHECK(sym_family_save(direct, &bytes, &b) == 0);
+            CHECK(a == b && memcmp(one, bytes, a) == 0);
+            sym_free_buffer(bytes);
+            sym_free_buffer(one);
+            sym_free_buffer(many);
+            sym_family_free(direct);
+        }
+        p.islands = 1;
     }
     /* Invalid compact results are atomic, just like invalid feature tiles. */
     sym_family_search_t *reduced = sym_family_search_new(X, 60, 3, y, 0, 0, &p, 4, 17);
@@ -226,7 +293,8 @@ int main(void) {
         sym_family_search_free(s);
     }
     cache_boundaries();
-    puts("family step: 36 external-evaluator runs, QR tile parity, atomic accept, polish, elite "
-         "cache, cancellation, SYM2 and 6 cache-boundary cases passed");
+    puts(
+        "family step: external-evaluator parity, refinement schedule, atomic accept, polish, elite "
+        "cache, cancellation, SYM2 and 6 cache-boundary cases passed");
     return 0;
 }

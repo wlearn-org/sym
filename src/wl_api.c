@@ -346,8 +346,9 @@ int wl_sym_search_batch_nodes(const sym_search_t *s, int index, int32_t *out, do
 
 /* Packed config: ten integer fields, then seven floating fields. Frontends can
  * pass one contiguous buffer without depending on native structure padding. */
-static int wl_family_config(const double *config, int count, sym_family_params_t *out) {
-    if (!config || (count < 17 || count > 19)) {
+static int wl_family_config(const double *config, int count, sym_family_params_t *out,
+                            int32_t *interval, int32_t *refine_count) {
+    if (!config || (count < 17 || count > 21)) {
         sym_set_error("invalid family config length");
         return -1;
     }
@@ -385,13 +386,22 @@ static int wl_family_config(const double *config, int count, sym_family_params_t
         }
         p.polish_batch = (int32_t)config[17];
     }
-    if (count == 19) {
+    if (count >= 19) {
         if (config[18] != 0 && config[18] != 1) {
             sym_set_error("hierarchical must be boolean");
             return -1;
         }
         p.hierarchical = (int32_t)config[18];
     }
+    for (int i = 19; i < count; i++) {
+        if (!isfinite(config[i]) || config[i] < 0 || config[i] > INT32_MAX ||
+            floor(config[i]) != config[i]) {
+            sym_set_error("invalid family local refinement configuration");
+            return -1;
+        }
+    }
+    *interval = count >= 20 ? (int32_t)config[19] : 0;
+    *refine_count = count >= 21 ? (int32_t)config[20] : 0;
     *out = p;
     return 0;
 }
@@ -399,17 +409,25 @@ static int wl_family_config(const double *config, int count, sym_family_params_t
 sym_family_model_t *wl_sym_family_fit(const double *X, int rows, int cols, const double *y,
                                       int task, int classes, const double *config, int count) {
     sym_family_params_t p;
-    if (wl_family_config(config, count, &p))
+    int32_t interval, refine_count;
+    if (wl_family_config(config, count, &p, &interval, &refine_count))
         return NULL;
-    return sym_family_fit(X, rows, cols, y, task, classes, &p);
+    return sym_family_fit_refined(X, rows, cols, y, task, classes, &p, interval, refine_count);
 }
 sym_family_search_t *wl_sym_family_search_new(const double *X, int rows, int cols, const double *y,
                                               int task, int classes, const double *config,
                                               int count, int capacity, int tile_rows) {
     sym_family_params_t p;
-    if (wl_family_config(config, count, &p))
+    int32_t interval, refine_count;
+    if (wl_family_config(config, count, &p, &interval, &refine_count))
         return NULL;
-    return sym_family_search_new(X, rows, cols, y, task, classes, &p, capacity, tile_rows);
+    sym_family_search_t *s =
+        sym_family_search_new(X, rows, cols, y, task, classes, &p, capacity, tile_rows);
+    if (s && sym_family_search_set_refinement(s, interval, refine_count)) {
+        sym_family_search_free(s);
+        return NULL;
+    }
+    return s;
 }
 int wl_sym_family_search_propose(sym_family_search_t *s) {
     const sym_family_batch_t *b;

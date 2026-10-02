@@ -23,6 +23,13 @@ void sym_family_params_init(sym_family_params_t *p);
  * classes>=2. Free every returned model with sym_family_free(). */
 sym_family_model_t *sym_family_fit(const double *X, int32_t rows, int32_t cols, const double *y,
                                    int32_t task, int32_t classes, const sym_family_params_t *p);
+/* Optional in-loop polish; preserves the original parameter-struct ABI. Both
+ * controls zero disables it; otherwise both must be positive, count <= 32 and
+ * population, with polish > 0. Reuses polish/polish_batch before breeding. */
+sym_family_model_t *sym_family_fit_refined(const double *X, int32_t rows, int32_t cols,
+                                           const double *y, int32_t task, int32_t classes,
+                                           const sym_family_params_t *p, int32_t interval,
+                                           int32_t count);
 /* Feature-tile protocol: descriptors are [candidate,term,5] doubles containing
  * featureA,featureB,operator,p0,p1. Evaluators return [candidate,row,term] doubles.
  * stage 0 accumulates train-only moments, 1 updates QR, 2 computes losses.
@@ -40,6 +47,8 @@ sym_family_search_t *sym_family_search_new(const double *X, int32_t rows, int32_
                                            const double *y, int32_t task, int32_t classes,
                                            const sym_family_params_t *p, int32_t capacity,
                                            int32_t tile_rows);
+/* Configure only before the first proposal; invalid changes leave state intact. */
+int sym_family_search_set_refinement(sym_family_search_t *s, int32_t interval, int32_t count);
 int sym_family_search_propose(sym_family_search_t *s, const sym_family_batch_t **out);
 const sym_family_batch_t *sym_family_search_pending(const sym_family_search_t *s);
 int sym_family_search_score(const sym_family_search_t *s, uint32_t id, double *out, int32_t count);

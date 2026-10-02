@@ -64,6 +64,8 @@ async function main() {
         polishBatchSize: 20,
         seed: 11,
         validationFraction: 0.2,
+        localRefineInterval: 1,
+        localRefineCount: 2,
         hierarchical
       }
       const c = await Model.create(params)

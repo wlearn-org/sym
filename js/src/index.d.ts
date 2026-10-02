@@ -47,6 +47,8 @@ export interface SymControls {
   migrationCount?: number
   broodSize?: number
   rowSampleSize?: number
+  /** Tree refinement, or opt-in family in-loop polish. Family requires both
+   * positive and polishPasses > 0; count is at most min(population, 32). */
   localRefineInterval?: number
   localRefineCount?: number
   complexityHofSize?: number

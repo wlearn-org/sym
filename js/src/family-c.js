@@ -33,10 +33,6 @@ function config(p) {
     'migration_interval',
     'migrationCount',
     'migration_count',
-    'localRefineInterval',
-    'local_refine_interval',
-    'localRefineCount',
-    'local_refine_count',
     'scoreMode',
     'score_mode',
     'jit',
@@ -86,7 +82,9 @@ function config(p) {
     p.ridge ?? 1e-8,
     p.tol ?? 1e-12,
     get('polishBatchSize', 'polish_batch_size', 0),
-    p.hierarchical == null ? 0 : typeof p.hierarchical === 'boolean' ? Number(p.hierarchical) : NaN
+    p.hierarchical == null ? 0 : typeof p.hierarchical === 'boolean' ? Number(p.hierarchical) : NaN,
+    get('localRefineInterval', 'local_refine_interval', 0),
+    get('localRefineCount', 'local_refine_count', 0)
   ]
   if (values.some(v => typeof v !== 'number' || !Number.isFinite(v)))
     throw new ValidationError('family parameters must be finite numbers')

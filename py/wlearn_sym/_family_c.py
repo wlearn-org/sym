@@ -42,10 +42,6 @@ def _config(p):
         "migration_interval",
         "migrationCount",
         "migration_count",
-        "localRefineInterval",
-        "local_refine_interval",
-        "localRefineCount",
-        "local_refine_count",
         "scoreMode",
         "score_mode",
         "jit",
@@ -93,6 +89,8 @@ def _config(p):
         p.get("tol", 1e-12),
         get("polishBatchSize", "polish_batch_size", 0),
         int(p.get("hierarchical", False)),
+        get("localRefineInterval", "local_refine_interval", 0),
+        get("localRefineCount", "local_refine_count", 0),
     ]
     if any(
         isinstance(v, (bool, str)) or not isinstance(v, (int, float, np.number))

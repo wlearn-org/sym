@@ -211,6 +211,8 @@ def test_c_family_native_wasm_and_bundle_parity(classes, hierarchical):
         seed=194,
         hierarchical=hierarchical,
         polishPasses=2,
+        localRefineInterval=1,
+        localRefineCount=2,
         polishBatchSize=16,
     )
     X = np.random.default_rng(420).uniform(-2, 2, (60, 3))

@@ -2,6 +2,53 @@
 
 Benchmarks are separate from unit tests. They use deterministic datasets and write JSON result files for change-to-change comparison.
 
+## Quality screening and in-loop polish
+
+`quality.py` runs the versioned 24-task `quality-tasks.json` manifest: synthetic
+equations with noise, irrelevant columns, input/target rescaling, collinearity,
+extrapolation, and scikit-learn's diabetes dataset. This is a screening set, not
+a substitute for SRBench or evidence of general superiority. Generated target
+formulas never initialize or constrain model search.
+
+From this repository, with NumPy, scikit-learn and wlearn installed:
+
+```sh
+make build-c
+PYTHONPATH=py python -m pytest bench/test_quality.py -q
+SYM_LIB_PATH="$PWD/build/libsym.so" PYTHONPATH=py \
+  python bench/quality.py --jobs 2 --output bench/results/quality.jsonl
+```
+
+The default arms are family search without polish, final polish, in-loop plus
+final polish, tree search, standardized ridge and histogram gradient boosting.
+The `during` control reuses coordinate proposals with QR readout refits.
+Five search seeds see identical training/test data per task. Test data never
+enter fitting or timing pilots. Each Sym result is saved/reloaded and checked
+against an independent NumPy evaluator of its exported formula.
+
+`--budget-ms 100 --arms family,final,during` calibrates generations using up to
+three training-only timing pilots per arm. It reports pilot cost separately and
+flags final fits outside ±25% of the target as unmatched. This compares final-fit
+cost, not equal total compute including calibration. Fixed-generation runs also
+report actual cost; extra refinement is not free. Preset sklearn/PySR/Operon
+runs are never labeled budget-matched. Keep failures and unmatched results in
+reports, and restrict paired budget claims to pairs meeting the stated limit.
+
+Optional arms: `family-pg`, `during-pg`, `post-adam`, `pysr`, `operon`. These require
+their respective packages. Polygrad/PySR runs require `--jobs 1`; each worker
+limits numerical-library threads to one. Cap total CPU affinity to half the
+machine when running additional checks alongside this harness. `--device` is
+passed to Polygrad's public runtime; there is no additional device environment
+variable. Timing distinguishes a first fit in a fresh process from a fit after
+timing pilots. Runtime creation, prediction, pilots and fit times are separate.
+
+Worker timeouts cover imports and qualification as well as fitting, terminate
+the complete process group and remain recorded as failures. RSS is the isolated
+worker's process watermark, including imports and pilots, not GPU memory or a
+model-only allocation estimate. Error metrics are numerical; no exact symbolic
+recovery claim is inferred from R². JSONL rows and the adjacent metadata file
+record parameters, versions, task manifest identity and failures.
+
 ## Friedman JS
 
 ```bash
@@ -120,6 +167,10 @@ precede final boundary-validation and environment-selection fixes; their explici
 CUDA device and numerical algorithm are unchanged by those fixes.
 
 ## Fresh and reused runtimes (2026-09-28 follow-up)
+
+Historical measurements and failure reports below predate published Polygrad
+0.6.0. They are not a current failure report; rerun the backend tests against the
+installed version when evaluating numerical correctness and ownership.
 
 `family-backends.py` now accepts `--batches`, `--dtypes`, `--datasets` and
 `--warm-repeats`. Each configuration reports runtime creation separately, a
