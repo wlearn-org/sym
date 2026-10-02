@@ -287,3 +287,16 @@ Hierarchical division can produce very large conservative feature bounds even
 from bounded input data. With Polygrad and trigonometric operators, this can
 trigger the cosine precision guard during search. Use the default flat family
 or the C backend for those searches; the error does not silently change backends.
+
+## Release history
+
+### 0.2.0 — 2026-10-02
+
+- Add optional in-loop family polish, train-only scaled constant coordinates,
+  and damped least-squares refinement through C and public Polygrad scorers.
+- Add optional regression loss scaling by training-target variance. Existing
+  defaults, artifact formats and the public C parameter struct remain compatible.
+- Add reproducible quality/cost benchmarks, numerical and cross-runtime tests,
+  and preserve large starting constants during post-fit gradient refinement.
+
+These controls are experimental and opt-in. Polygrad remains pinned to 0.6.0.

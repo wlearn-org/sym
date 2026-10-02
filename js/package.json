@@ -1,6 +1,6 @@
 {
   "name": "@wlearn/sym",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Symbolic regression, classification, and formula features backed by the wlearn C11 core",
   "type": "commonjs",
   "main": "src/index.js",
