@@ -27,6 +27,7 @@ ARMS = (
     "scaled",
     "lm",
     "scaled-lm",
+    "scaled-lm-relative",
     "tree",
     "ridge",
     "histgb",
@@ -41,6 +42,9 @@ ARMS = (
 def fit_model(arm, X, y, seed, generations, settings, runtime=None):
     from wlearn_sym import SymbolicRegressor
 
+    relative = arm == "scaled-lm-relative"
+    if relative:
+        arm = "scaled-lm"
     params = dict(
         population=settings["population"],
         eliteCount=4,
@@ -59,6 +63,8 @@ def fit_model(arm, X, y, seed, generations, settings, runtime=None):
         params.update(scaleAware=True)
     if arm in ("lm", "scaled-lm"):
         params.update(polishMethod="lm", polishPasses=2)
+    if relative:
+        params["lossScale"] = "target-variance"
     if arm.endswith("-pg"):
         params.update(backend="polygrad", polygrad=runtime)
     model = SymbolicRegressor(params)
@@ -85,7 +91,12 @@ def worker(case):
     import resource
 
     task, arm, seed, settings = (case[k] for k in ("task", "arm", "seed", "settings"))
-    X, y, Xt, yt = dataset(task, settings["rows"], settings["test_rows"])
+    X, y, Xt, yt = dataset(
+        task,
+        settings["rows"],
+        settings["test_rows"],
+        data_seed=settings.get("data_seed"),
+    )
     model = runtime = loaded = None
     result = dict(case, status="ok", rows=len(y), test_rows=len(yt))
     try:
@@ -285,6 +296,7 @@ def main():
     p.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--arms", default="family,final,during,tree,ridge,histgb")
     p.add_argument("--tasks", default="all")
+    p.add_argument("--manifest", default=str(MANIFEST))
     p.add_argument("--seeds", default="11,23,37,51,73")
     p.add_argument("--rows", type=int, default=256)
     p.add_argument("--test-rows", type=int, default=512)
@@ -325,7 +337,8 @@ def main():
         or a.timeout <= 0
     ):
         p.error("invalid size, budget or timeout")
-    tasks = manifest()["tasks"]
+    task_manifest = manifest(Path(a.manifest))
+    tasks = task_manifest["tasks"]
     if a.tasks != "all":
         wanted = a.tasks.split(",")
         if set(wanted) - {t["id"] for t in tasks}:
@@ -343,6 +356,7 @@ def main():
             "device",
         )
     }
+    settings["data_seed"] = task_manifest["data_seed"]
     cases = [
         dict(task=t, arm=arm, seed=seed, settings=settings)
         for t in tasks
@@ -384,7 +398,7 @@ def main():
         affinity=sorted(os.sched_getaffinity(0)),
         versions=versions,
         source_sha256=source_hashes,
-        manifest_sha256=hashlib.sha256(MANIFEST.read_bytes()).hexdigest(),
+        manifest_sha256=hashlib.sha256(Path(a.manifest).read_bytes()).hexdigest(),
         tasks=tasks,
         cases=len(cases),
         limitations="Numerical test error, not proof of equation recovery. RSS includes imports/pilots. Budgets target fit time; pilots and unmatched cases are reported. External baselines use fixed presets.",

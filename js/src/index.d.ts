@@ -33,6 +33,9 @@ export interface SymControls {
   polishPasses?: number
   /** Train-only scaling of family constant coordinates. Default false. */
   scaleAware?: boolean
+  /** Family regression: scale complexityPenalty/tol by training-target variance.
+   * Default absolute; reported losses stay in original units. */
+  lossScale?: 'absolute' | 'target-variance'
   /** Family polish; lm requires polishPasses > 0 and polishBatchSize = 0. */
   polishMethod?: 'coordinate' | 'lm'
   /** 0 keeps sequential polish; a positive size uses frozen-base proposal batches. */

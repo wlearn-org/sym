@@ -217,6 +217,7 @@ def test_c_family_native_wasm_and_bundle_parity(classes, hierarchical, method):
         polishBatchSize=16 if method == "coordinate" else 0,
         polishMethod=method,
         scaleAware=method == "lm",
+        lossScale="absolute" if classes else "target-variance",
     )
     X = np.random.default_rng(420).uniform(-2, 2, (60, 3))
     labels = [91, -7, 123][:classes]

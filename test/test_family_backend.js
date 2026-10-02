@@ -65,6 +65,7 @@ async function main() {
         polishBatchSize: polishMethod === 'lm' ? 0 : 20,
         polishMethod,
         scaleAware: polishMethod === 'lm',
+        lossScale: classes ? 'absolute' : 'target-variance',
         seed: 11,
         validationFraction: 0.2,
         localRefineInterval: 1,

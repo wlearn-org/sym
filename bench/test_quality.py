@@ -60,3 +60,22 @@ def test_reference_keeps_protected_division_and_hierarchy():
         np.array([1e-7, -1e-7], dtype=np.float32).astype(float) / 1e-6
     ).astype(np.float32)
     np.testing.assert_array_equal(predict(formula, X), expected)
+
+
+def test_scale_manifest_pairs_units_without_changing_observations():
+    m = manifest(Path(__file__).with_name("quality-scale-tasks.json"))
+    groups = {}
+    for task in m["tasks"]:
+        X, y, Xt, yt = dataset(task, 48, 64, data_seed=m["data_seed"])
+        original = groups.setdefault(
+            task["data_id"],
+            (X, y / task["target_scale"], Xt, yt / task["target_scale"]),
+        )
+        for a, b in zip(
+            (X, y / task["target_scale"], Xt, yt / task["target_scale"]), original
+        ):
+            np.testing.assert_allclose(a, b, rtol=1e-12, atol=1e-12)
+        larger_test = dataset(task, 48, 99, data_seed=m["data_seed"])
+        np.testing.assert_array_equal(X, larger_test[0])
+        np.testing.assert_array_equal(y, larger_test[1])
+    assert len(groups) == 8

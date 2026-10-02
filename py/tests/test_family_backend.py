@@ -258,6 +258,7 @@ def test_scaled_lm_public_polygrad(hierarchical):
         seed=11,
         validationFraction=0.2,
         scaleAware=True,
+        lossScale="target-variance",
         polishMethod="lm",
         polishPasses=3,
         hierarchical=hierarchical,
@@ -299,3 +300,53 @@ def test_scaled_constants_remain_the_start_of_postfit_adam():
         assert report["afterLoss"] < 1e-4
     finally:
         m.dispose()
+
+
+@pytest.mark.parametrize("dtype", ["float32", "float64"])
+def test_relative_loss_matches_explicit_settings_on_public_polygrad(dtype):
+    # Search trajectories can differ across scorer precision. Compare the new
+    # policy to the same backend with its resolved penalty/threshold explicitly.
+    import polygrad
+
+    X = np.random.default_rng(918).uniform(-1, 1, (48, 3))
+    y = 0.001 * (np.cos(X[:, 0]) + X[:, 1] * X[:, 2])
+    mean = moment = 0.0
+    for n, value in enumerate(y.astype(np.float32), 1):
+        delta = float(value) - mean
+        mean += delta / n
+        moment += delta * (float(value) - mean)
+    variance = moment / len(y)
+    runtime = polygrad.create()
+    p = dict(
+        strategy="family",
+        backend="polygrad",
+        polygrad=runtime,
+        population=8,
+        eliteCount=2,
+        generations=2,
+        terms=2,
+        seed=11,
+        scorerDtype=dtype,
+        polishMethod="lm",
+        polishPasses=2,
+        localRefineInterval=1,
+        localRefineCount=1,
+    )
+    a = SymbolicRegressor({**p, "lossScale": "target-variance"})
+    b = SymbolicRegressor(
+        {**p, "complexityPenalty": 1e-5 * variance, "tol": 1e-12 * variance}
+    )
+    try:
+        a.fit(X, y)
+        b.fit(X, y)
+        assert a.formula() == b.formula()
+        np.testing.assert_array_equal(a.predict(X), b.predict(X))
+        loaded = SymbolicRegressor.load(a.save())
+        try:
+            np.testing.assert_array_equal(a.predict(X), loaded.predict(X))
+        finally:
+            loaded.dispose()
+    finally:
+        a.dispose()
+        b.dispose()
+        runtime.dispose()

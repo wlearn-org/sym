@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "data_seed": 9102026,
+  "description": "Fresh confirmation tasks for loss-scale policy. Identical underlying observations across target units; formulas are data generators only. Fixed before the first run; do not tune against results.",
+  "tasks": [
+    {
+      "id": "quartic-0.001",
+      "data_id": "quartic",
+      "function": "quartic",
+      "target_scale": 0.001,
+      "noise": 0.05
+    },
+    {
+      "id": "quartic-1",
+      "data_id": "quartic",
+      "function": "quartic",
+      "target_scale": 1,
+      "noise": 0.05
+    },
+    {
+      "id": "quartic-1000",
+      "data_id": "quartic",
+      "function": "quartic",
+      "target_scale": 1000,
+      "noise": 0.05
+    },
+    {
+      "id": "sigmoid-interaction-0.001",
+      "data_id": "sigmoid-interaction",
+      "function": "sigmoid-interaction",
+      "target_scale": 0.001,
+      "noise": 0.05
+    },
+    {
+      "id": "sigmoid-interaction-1",
+      "data_id": "sigmoid-interaction",
+      "function": "sigmoid-interaction",
+      "target_scale": 1,
+      "noise": 0.05
+    },
+    {
+      "id": "sigmoid-interaction-1000",
+      "data_id": "sigmoid-interaction",
+      "function": "sigmoid-interaction",
+      "target_scale": 1000,
+      "noise": 0.05
+    },
+    {
+      "id": "gaussian-bump-0.001",
+      "data_id": "gaussian-bump",
+      "function": "gaussian-bump",
+      "target_scale": 0.001,
+      "noise": 0.05
+    },
+    {
+      "id": "gaussian-bump-1",
+      "data_id": "gaussian-bump",
+      "function": "gaussian-bump",
+      "target_scale": 1,
+      "noise": 0.05
+    },
+    {
+      "id": "gaussian-bump-1000",
+      "data_id": "gaussian-bump",
+      "function": "gaussian-bump",
+      "target_scale": 1000,
+      "noise": 0.05
+    },
+    {
+      "id": "oscillation-product-0.001",
+      "data_id": "oscillation-product",
+      "function": "oscillation-product",
+      "target_scale": 0.001,
+      "noise": 0.05
+    },
+    {
+      "id": "oscillation-product-1",
+      "data_id": "oscillation-product",
+      "function": "oscillation-product",
+      "target_scale": 1,
+      "noise": 0.05
+    },
+    {
+      "id": "oscillation-product-1000",
+      "data_id": "oscillation-product",
+      "function": "oscillation-product",
+      "target_scale": 1000,
+      "noise": 0.05
+    },
+    {
+      "id": "saturating-0.001",
+      "data_id": "saturating",
+      "function": "saturating",
+      "target_scale": 0.001,
+      "noise": 0.05
+    },
+    {
+      "id": "saturating-1",
+      "data_id": "saturating",
+      "function": "saturating",
+      "target_scale": 1,
+      "noise": 0.05
+    },
+    {
+      "id": "saturating-1000",
+      "data_id": "saturating",
+      "function": "saturating",
+      "target_scale": 1000,
+      "noise": 0.05
+    },
+    {
+      "id": "absolute-interaction-0.001",
+      "data_id": "absolute-interaction",
+      "function": "absolute-interaction",
+      "target_scale": 0.001,
+      "noise": 0.05
+    },
+    {
+      "id": "absolute-interaction-1",
+      "data_id": "absolute-interaction",
+      "function": "absolute-interaction",
+      "target_scale": 1,
+      "noise": 0.05
+    },
+    {
+      "id": "absolute-interaction-1000",
+      "data_id": "absolute-interaction",
+      "function": "absolute-interaction",
+      "target_scale": 1000,
+      "noise": 0.05
+    },
+    {
+      "id": "softplus-0.001",
+      "data_id": "softplus",
+      "function": "softplus",
+      "target_scale": 0.001,
+      "noise": 0.05
+    },
+    {
+      "id": "softplus-1",
+      "data_id": "softplus",
+      "function": "softplus",
+      "target_scale": 1,
+      "noise": 0.05
+    },
+    {
+      "id": "softplus-1000",
+      "data_id": "softplus",
+      "function": "softplus",
+      "target_scale": 1000,
+      "noise": 0.05
+    },
+    {
+      "id": "decaying-oscillation-0.001",
+      "data_id": "decaying-oscillation",
+      "function": "decaying-oscillation",
+      "target_scale": 0.001,
+      "noise": 0.05
+    },
+    {
+      "id": "decaying-oscillation-1",
+      "data_id": "decaying-oscillation",
+      "function": "decaying-oscillation",
+      "target_scale": 1,
+      "noise": 0.05
+    },
+    {
+      "id": "decaying-oscillation-1000",
+      "data_id": "decaying-oscillation",
+      "function": "decaying-oscillation",
+      "target_scale": 1000,
+      "noise": 0.05
+    }
+  ]
+}

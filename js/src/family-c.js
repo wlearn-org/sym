@@ -67,6 +67,9 @@ function config(p) {
   const method = get('polishMethod', 'polish_method', 'coordinate')
   if (typeof scaled !== 'boolean' || !['coordinate', 'lm'].includes(method))
     throw new ValidationError('invalid family optimizer options')
+  const lossScale = get('lossScale', 'loss_scale', 'absolute')
+  if (!['absolute', 'target-variance'].includes(lossScale))
+    throw new ValidationError('invalid family loss scale')
   const values = [
     p.population ?? 128,
     p.generations ?? 20,
@@ -90,7 +93,8 @@ function config(p) {
     get('localRefineInterval', 'local_refine_interval', 0),
     get('localRefineCount', 'local_refine_count', 0),
     Number(scaled),
-    Number(method === 'lm')
+    Number(method === 'lm'),
+    Number(lossScale === 'target-variance')
   ]
   if (values.some(v => typeof v !== 'number' || !Number.isFinite(v)))
     throw new ValidationError('family parameters must be finite numbers')

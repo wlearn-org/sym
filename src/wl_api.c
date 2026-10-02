@@ -1,5 +1,5 @@
 #include "sym.h"
-#include "sym_family.h"
+#include "sym_family_internal.h"
 #include "sym_internal.h"
 #include <math.h>
 
@@ -348,8 +348,8 @@ int wl_sym_search_batch_nodes(const sym_search_t *s, int index, int32_t *out, do
  * pass one contiguous buffer without depending on native structure padding. */
 static int wl_family_config(const double *config, int count, sym_family_params_t *out,
                             int32_t *interval, int32_t *refine_count, int32_t *scaled,
-                            int32_t *method) {
-    if (!config || (count < 17 || count > 23)) {
+                            int32_t *method, int32_t *relative) {
+    if (!config || (count < 17 || count > 24)) {
         sym_set_error("invalid family config length");
         return -1;
     }
@@ -405,6 +405,7 @@ static int wl_family_config(const double *config, int count, sym_family_params_t
     *refine_count = count >= 21 ? (int32_t)config[20] : 0;
     *scaled = count >= 22 ? (int32_t)config[21] : 0;
     *method = count >= 23 ? (int32_t)config[22] : 0;
+    *relative = count >= 24 ? (int32_t)config[23] : 0;
     *out = p;
     return 0;
 }
@@ -413,13 +414,14 @@ sym_family_search_t *wl_sym_family_search_new(const double *X, int rows, int col
                                               int task, int classes, const double *config,
                                               int count, int capacity, int tile_rows) {
     sym_family_params_t p;
-    int32_t interval, refine_count, scaled, method;
-    if (wl_family_config(config, count, &p, &interval, &refine_count, &scaled, &method))
+    int32_t interval, refine_count, scaled, method, relative;
+    if (wl_family_config(config, count, &p, &interval, &refine_count, &scaled, &method, &relative))
         return NULL;
     sym_family_search_t *s =
         sym_family_search_new(X, rows, cols, y, task, classes, &p, capacity, tile_rows);
     if (s && (sym_family_search_set_refinement(s, interval, refine_count) ||
-              ((scaled || method) && sym_family_search_set_optimizer(s, scaled, method)))) {
+              ((scaled || method) && sym_family_search_set_optimizer(s, scaled, method)) ||
+              (relative && sym_family_search_set_loss_scale(s, relative)))) {
         sym_family_search_free(s);
         return NULL;
     }
@@ -427,12 +429,14 @@ sym_family_search_t *wl_sym_family_search_new(const double *X, int rows, int col
 }
 sym_family_model_t *wl_sym_family_fit(const double *X, int rows, int cols, const double *y,
                                       int task, int classes, const double *config, int count) {
-    sym_family_params_t p;
-    int32_t interval, refine_count, scaled, method;
-    if (wl_family_config(config, count, &p, &interval, &refine_count, &scaled, &method))
+    sym_family_search_t *s =
+        wl_sym_family_search_new(X, rows, cols, y, task, classes, config, count,
+                                 SYM_FAMILY_FIT_CANDIDATES, SYM_FAMILY_FIT_TILE_ROWS);
+    if (!s)
         return NULL;
-    return sym_family_fit_optimized(X, rows, cols, y, task, classes, &p, interval,
-                                    refine_count, scaled, method);
+    sym_family_model_t *m = sym_family_search_run(s);
+    sym_family_search_free(s);
+    return m;
 }
 int wl_sym_family_search_propose(sym_family_search_t *s) {
     const sym_family_batch_t *b;

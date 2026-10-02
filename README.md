@@ -87,6 +87,15 @@ plus random multi-parameter proposals, followed by selection. The actual round
 size is at least the coordinate-trial count. This changes the polish policy;
 transport `batchSize` (1–512, default `min(population, 512)`) does not change proposal/RNG order.
 
+For family regression, `lossScale: 'target-variance'` interprets
+`complexityPenalty` and `tol` relative to the population variance of the rounded
+training targets. The default is `'absolute'`. Validation rows never enter this
+calculation; constant training targets give zero penalty and tolerance. MSE and
+saved formulas retain original units, and the artifact stores the resolved
+penalty. Ridge and the separate post-fit refinement `tolerance` stay unchanged.
+This controls target-unit sensitivity; it does not guarantee an identical search
+under floating-point rounding. Classification rejects this mode.
+
 Optional `localRefineInterval` and `localRefineCount` enable family polish during
 evolution. Set both positive, with `polishPasses > 0`; count is at most
 `min(population, 32)`. Every interval, before breeding, up to that many distinct

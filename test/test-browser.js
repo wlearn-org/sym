@@ -123,6 +123,7 @@ async function runIifeTest(page, bundle, exportKeys, origin) {
               polishBatchSize: polishMethod === 'lm' ? 0 : 8,
               polishMethod,
               scaleAware: polishMethod === 'lm',
+              lossScale: 'target-variance',
               localRefineInterval: 1,
               localRefineCount: 1,
               batchSize: 8,

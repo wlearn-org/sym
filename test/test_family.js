@@ -7,7 +7,7 @@ const { ValidationError, Pipeline, load, decodeBundle, encodeBundle } = createRe
 )('@wlearn/core')
 const { CFamilyEngine } = require('../js/src/family-c')
 const { resolveStrategy } = require('../js/src/strategy')
-for (const option of [{ scaleAware: true }, { polishMethod: 'lm' }])
+for (const option of [{ scaleAware: true }, { polishMethod: 'lm' }, { lossScale: 'target-variance' }])
   assert.throws(() => resolveStrategy(option, 'regression'), /require strategy="family"/)
 const legacy = require('./fixtures/legacy-family.json')
 const p = {
@@ -50,6 +50,20 @@ async function main() {
     { engine: 'c', strategy: 'family' }
   ]) {
     await assert.rejects(SymbolicRegressor.create(params), ValidationError)
+  }
+  for (const lossScale of ['bogus', true, 1]) {
+    const invalid = await SymbolicRegressor.create({ ...p, lossScale })
+    try {
+      assert.throws(() => invalid.fit(X, y), /loss scale/)
+    } finally {
+      invalid.dispose()
+    }
+  }
+  const classifier = await SymbolicClassifier.create({ ...p, lossScale: 'target-variance' })
+  try {
+    assert.throws(() => classifier.fit(X, X.map((_, i) => i % 2)), /regression/)
+  } finally {
+    classifier.dispose()
   }
   await assert.rejects(FormulaTransformer.create(p), ValidationError)
   const m = await SymbolicRegressor.create(p)

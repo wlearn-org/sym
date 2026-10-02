@@ -21,7 +21,7 @@ function resolveStrategy(params, task) {
   if (backend === 'polygrad' && strategy === 'tree')
     throw new ValidationError('tree search currently supports backend="c" only')
   if (strategy !== 'family' &&
-      ['scaleAware', 'scale_aware', 'polishMethod', 'polish_method'].some(k => params[k] != null))
+      ['scaleAware', 'scale_aware', 'polishMethod', 'polish_method', 'lossScale', 'loss_scale'].some(k => params[k] != null))
     throw new ValidationError('constant optimizer options require strategy="family"')
   return { strategy, backend }
 }

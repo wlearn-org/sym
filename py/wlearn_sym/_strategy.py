@@ -28,6 +28,8 @@ def resolve_strategy(params, task):
             "scale_aware",
             "polishMethod",
             "polish_method",
+            "lossScale",
+            "loss_scale",
         )
     ):
         raise ValueError('constant optimizer options require strategy="family"')

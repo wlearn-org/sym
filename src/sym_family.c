@@ -346,7 +346,7 @@ struct sym_family_search {
     int32_t *slots;
     int32_t pass, row, pending, stale, polish_cursor, polish_total;
     candidate polish_base;
-    double target_mean;
+    double target_mean, absolute_penalty, absolute_tol;
     int32_t polish_pass, polish_term, polish_param, polish_sign, polish_improved;
     int32_t local_refine_interval, local_refine_count;
     int32_t refined, refining, refine_index, refine_count, refine_slots[32];
@@ -364,6 +364,37 @@ int sym_family_search_set_refinement(sym_family_search_t *s, int32_t interval, i
         return fail("invalid family refinement configuration or search already started");
     s->local_refine_interval = interval;
     s->local_refine_count = count;
+    return 0;
+}
+
+/* MSE, complexity cost and improvement thresholds have squared target units.
+ * Fit this conversion on the same rounded training targets as the readout;
+ * validation rows must not change regularization or stopping thresholds. */
+int sym_family_search_set_loss_scale(sym_family_search_t *s, int32_t relative) {
+    if (!s || s->serial || (relative != 0 && relative != 1))
+        return fail("invalid family loss scale or search already started");
+    if (relative && s->model->classes)
+        return fail("target-variance loss scale requires family regression");
+    double scale = 1;
+    if (relative) {
+        double mean = 0, moment = 0;
+        int n = 0;
+        for (int r = 0; r < s->rows; r++) {
+            if (s->validation[r])
+                continue;
+            double delta = s->y[r] - mean;
+            mean += delta / ++n;
+            moment += delta * (s->y[r] - mean);
+        }
+        /* A constant training target has zero variance and zero scale. Do not
+         * insert an absolute floor that would reintroduce dependence on units. */
+        scale = fmax(0, moment / n);
+    }
+    double penalty = s->absolute_penalty * scale, tol = s->absolute_tol * scale;
+    if (!isfinite(penalty) || !isfinite(tol))
+        return fail("family scaled penalty or tolerance overflow");
+    s->params.complexity_penalty = s->model->penalty = penalty;
+    s->params.tol = tol;
     return 0;
 }
 
@@ -558,6 +589,8 @@ sym_family_search_t *sym_family_search_new(const double *X, int32_t rows, int32_
         return NULL;
     }
     s->params = *p;
+    s->absolute_penalty = p->complexity_penalty;
+    s->absolute_tol = p->tol;
     s->rows = rows;
     s->cols = cols;
     s->capacity = capacity;
@@ -1172,9 +1205,9 @@ sym_family_model_t *sym_family_fit_optimized(const double *X, int32_t rows, int3
                                              const double *y, int32_t task, int32_t classes,
                                              const sym_family_params_t *p, int32_t interval,
                                              int32_t count, int32_t scaled, int32_t method) {
-    enum { FIT_CANDIDATES = 8, FIT_TILE_ROWS = 128 };
     sym_family_search_t *s =
-        sym_family_search_new(X, rows, cols, y, task, classes, p, FIT_CANDIDATES, FIT_TILE_ROWS);
+        sym_family_search_new(X, rows, cols, y, task, classes, p, SYM_FAMILY_FIT_CANDIDATES,
+                              SYM_FAMILY_FIT_TILE_ROWS);
     if (!s)
         return NULL;
     if (sym_family_search_set_refinement(s, interval, count) ||
@@ -1182,12 +1215,22 @@ sym_family_model_t *sym_family_fit_optimized(const double *X, int32_t rows, int3
         sym_family_search_free(s);
         return NULL;
     }
+    sym_family_model_t *m = sym_family_search_run(s);
+    sym_family_search_free(s);
+    return m;
+}
+
+sym_family_model_t *sym_family_search_run(sym_family_search_t *s) {
+    if (!s || s->serial || s->phase != FAMILY_POPULATION) {
+        fail("native family runner requires a fresh search");
+        return NULL;
+    }
+    int rows = s->rows;
     /* Size all storage from the accepted search shape, never a second default. */
     const size_t row_values = (size_t)s->capacity * s->params.terms;
     const size_t tile_rows = (size_t)s->tile_rows;
     double *features = malloc(row_values * tile_rows * sizeof(double));
     if (!features) {
-        sym_family_search_free(s);
         fail("out of memory allocating family tile");
         return NULL;
     }
@@ -1220,7 +1263,6 @@ sym_family_model_t *sym_family_fit_optimized(const double *X, int32_t rows, int3
     free(cache);
     sym_family_model_t *m = rc == 0 ? sym_family_search_finish(s) : NULL;
     free(features);
-    sym_family_search_free(s);
     return m;
 }
 

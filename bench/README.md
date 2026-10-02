@@ -227,3 +227,19 @@ buffers, so the precise owner is unresolved. A caller-owned runtime bounds its
 lifetime and supports reuse across AutoML folds via the tested class factory.
 Long-lived reuse needs the ownership issue resolved, and scorer-level reuse must
 replace data-dependent constants with dynamic inputs or include them in its key.
+
+### Target-unit experiment (October 2)
+
+`quality-scale-tasks.json` provides eight fresh noisy functions at three target
+scales, with identical observations across rescalings. Select it with
+`--manifest bench/quality-scale-tasks.json`; compare `scaled-lm` and
+`scaled-lm-relative`. The latter enables family `lossScale: 'target-variance'`.
+Neither supplies target formulas to the estimator.
+
+All 720 fits passed across the existing screen, fresh duration-target confirmation
+and fixed-generation confirmation. On small-target confirmation cases, relative
+loss won 35, lost 1 and tied 4 at matched final-fit duration (0.001 NMSE threshold).
+At ordinary scale: 8/10/22. Timing pilots cost extra. Keep the policy opt-in;
+these limited synthetic comparisons do not establish a universal default.
+Commands, full results and numerical caveats:
+`../temp/runs/20261002-sym-loss-scale/README.md` (local workspace evidence).

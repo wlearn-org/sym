@@ -10,16 +10,17 @@ import numpy as np
 MANIFEST = Path(__file__).with_name("quality-tasks.json")
 
 
-def manifest():
-    return json.loads(MANIFEST.read_text())
+def manifest(path=MANIFEST):
+    return json.loads(path.read_text())
 
 
-def dataset(task, rows=256, test_rows=512):
+def dataset(task, rows=256, test_rows=512, *, data_seed=None):
     # Data are fixed per task. Search-seed comparisons see exactly the same split.
     identity = int.from_bytes(
-        hashlib.sha256(task["id"].encode()).digest()[:4], "little"
+        hashlib.sha256(task.get("data_id", task["id"]).encode()).digest()[:4], "little"
     )
-    seeds = np.random.SeedSequence([manifest()["data_seed"], identity]).spawn(2)
+    seed = manifest()["data_seed"] if data_seed is None else data_seed
+    seeds = np.random.SeedSequence([seed, identity]).spawn(2)
     rng, test_rng = [np.random.default_rng(s) for s in seeds]
     if task["function"] == "diabetes":
         from sklearn.datasets import load_diabetes
@@ -56,6 +57,22 @@ def dataset(task, rows=256, test_rows=512):
             y = (z[:, 0] + 0.4) / (1.5 + z[:, 1] ** 2)
         elif kind == "composed":
             y = np.sin(1.7 * z[:, 0] * z[:, 1] + 0.2) + np.tanh(z[:, 2] - z[:, 3])
+        elif kind == "quartic":
+            y = z[:, 0] ** 4 - 0.6 * z[:, 1] ** 2 + 0.4 * z[:, 2]
+        elif kind == "sigmoid-interaction":
+            y = 1 / (1 + np.exp(-3 * z[:, 0])) + 0.5 * z[:, 1] * z[:, 2]
+        elif kind == "gaussian-bump":
+            y = np.exp(-3 * z[:, 0] ** 2 - z[:, 1] ** 2) + 0.2 * z[:, 2]
+        elif kind == "oscillation-product":
+            y = np.sin(3.1 * z[:, 0]) * np.cos(1.3 * z[:, 1]) + 0.15 * z[:, 2]
+        elif kind == "saturating":
+            y = z[:, 0] / np.sqrt(0.3 + z[:, 0] ** 2) + 0.4 * z[:, 1]
+        elif kind == "absolute-interaction":
+            y = np.abs(z[:, 0] - 0.3 * z[:, 1]) + z[:, 2] * z[:, 3]
+        elif kind == "softplus":
+            y = np.logaddexp(0, 2 * z[:, 0]) - 0.5 * z[:, 1]
+        elif kind == "decaying-oscillation":
+            y = np.exp(-z[:, 0]) * np.sin(2.7 * z[:, 1]) + 0.2 * z[:, 2]
         elif kind == "friedman1":
             u = (z + 1) / 2
             y = (

@@ -58,6 +58,14 @@ sym_family_search_t *sym_family_search_new(const double *X, int32_t rows, int32_
 /* Configure only before the first proposal; invalid changes leave state intact. */
 int sym_family_search_set_refinement(sym_family_search_t *s, int32_t interval, int32_t count);
 int sym_family_search_set_optimizer(sym_family_search_t *s, int32_t scaled, int32_t method);
+/* 0 keeps absolute loss units; 1 multiplies penalty/tol by training-target
+ * population variance (regression only, zero for constant targets). Repeatable
+ * before the first proposal; invalid changes are atomic. Saved loss/penalty
+ * remain in original target units. No change to ridge or formula parameters. */
+int sym_family_search_set_loss_scale(sym_family_search_t *s, int32_t relative);
+/* Run a fresh configured search through the cached C evaluator. Returns an
+ * owned model; the caller still owns/frees the search on success or failure. */
+sym_family_model_t *sym_family_search_run(sym_family_search_t *s);
 int sym_family_search_propose(sym_family_search_t *s, const sym_family_batch_t **out);
 const sym_family_batch_t *sym_family_search_pending(const sym_family_search_t *s);
 int sym_family_search_score(const sym_family_search_t *s, uint32_t id, double *out, int32_t count);

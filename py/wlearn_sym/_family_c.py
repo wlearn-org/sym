@@ -73,6 +73,9 @@ def _config(p):
     method = get("polishMethod", "polish_method", "coordinate")
     if type(scaled) is not bool or method not in ("coordinate", "lm"):
         raise ValueError("invalid family optimizer options")
+    loss_scale = get("lossScale", "loss_scale", "absolute")
+    if loss_scale not in ("absolute", "target-variance"):
+        raise ValueError("invalid family loss scale")
     values = [
         p.get("population", 128),
         p.get("generations", 20),
@@ -97,6 +100,7 @@ def _config(p):
         get("localRefineCount", "local_refine_count", 0),
         int(scaled),
         int(method == "lm"),
+        int(loss_scale == "target-variance"),
     ]
     if any(
         isinstance(v, (bool, str)) or not isinstance(v, (int, float, np.number))

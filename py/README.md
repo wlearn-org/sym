@@ -75,7 +75,16 @@ LM requires both training and validation-objective improvement for acceptance.
 Float32 residual differences can change LM steps and the resulting search path.
 It adds O(rows × terms) host residual storage/transfer with Polygrad; feature evaluation
 and QR factorization still execute on the selected device. These are experiments,
-not default changes. Target scaling and the absolute complexity penalty are unchanged.
+not default changes. The separate `lossScale` option controls penalty/threshold units.
+
+For family regression, `lossScale: 'target-variance'` interprets
+`complexityPenalty` and `tol` relative to the population variance of the rounded
+training targets. The default is `'absolute'`. Validation rows never enter this
+calculation; constant training targets give zero penalty and tolerance. MSE and
+saved formulas retain original units, and the artifact stores the resolved
+penalty. Ridge and the separate post-fit refinement `tolerance` stay unchanged.
+This controls target-unit sensitivity; it does not guarantee an identical search
+under floating-point rounding. Classification rejects this mode.
 
 Optional `localRefineInterval` and `localRefineCount` (both default 0) run the same
 polish before breeding every interval. Enable both with `polishPasses > 0`;

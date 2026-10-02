@@ -174,6 +174,48 @@ static void refinement_schedule(void) {
     sym_family_free(m);
     sym_family_search_free(s);
 }
+static void loss_scale_contract(void) {
+    double X[64], y[32], mean = 0, moment = 0;
+    for (int r = 0; r < 32; r++) {
+        X[2 * r] = r / 16.0 - 1;
+        X[2 * r + 1] = sin(r);
+        y[r] = (double)(float)(0.001 * cos(r / 16.0));
+        double delta = y[r] - mean;
+        mean += delta / (r + 1);
+        moment += delta * (y[r] - mean);
+    }
+    sym_family_params_t p;
+    sym_family_params_init(&p);
+    p.population = 16;
+    p.generations = 3;
+    p.elite = 4;
+    p.terms = 3;
+    sym_family_search_t *s = sym_family_search_new(X, 32, 2, y, 0, 0, &p, 3, 7);
+    CHECK(s);
+    CHECK(sym_family_search_set_loss_scale(s, 1) == 0);
+    CHECK(sym_family_search_set_loss_scale(s, 0) == 0);
+    CHECK(sym_family_search_set_loss_scale(s, 1) == 0);
+    CHECK(sym_family_search_set_loss_scale(s, -1) == -1);
+    sym_family_model_t *relative = sym_family_search_run(s);
+    CHECK(relative);
+    CHECK(sym_family_search_set_loss_scale(s, 1) == -1);
+    CHECK(sym_family_search_run(s) == NULL);
+    sym_family_search_free(s);
+    p.complexity_penalty *= moment / 32;
+    p.tol *= moment / 32;
+    sym_family_model_t *absolute = sym_family_fit(X, 32, 2, y, 0, 0, &p);
+    CHECK(absolute);
+    char *a, *b;
+    int32_t na, nb;
+    CHECK(sym_family_save(relative, &a, &na) == 0);
+    CHECK(sym_family_save(absolute, &b, &nb) == 0);
+    CHECK(na == nb && memcmp(a, b, na) == 0);
+    sym_free_buffer(a);
+    sym_free_buffer(b);
+    sym_family_free(relative);
+    sym_family_free(absolute);
+}
+
 int main(void) {
     refinement_schedule();
     double X[180], y[60];
@@ -311,6 +353,7 @@ int main(void) {
         sym_family_search_free(s);
     }
     cache_boundaries();
+    loss_scale_contract();
     puts(
         "family step: external-evaluator parity, refinement schedule, atomic accept, polish, elite "
         "cache, cancellation, SYM2 and 6 cache-boundary cases passed");
