@@ -6,6 +6,9 @@ const { ValidationError, Pipeline, load, decodeBundle, encodeBundle } = createRe
   require('node:path').resolve(__dirname, '../js/package.json')
 )('@wlearn/core')
 const { CFamilyEngine } = require('../js/src/family-c')
+const { resolveStrategy } = require('../js/src/strategy')
+for (const option of [{ scaleAware: true }, { polishMethod: 'lm' }])
+  assert.throws(() => resolveStrategy(option, 'regression'), /require strategy="family"/)
 const legacy = require('./fixtures/legacy-family.json')
 const p = {
   strategy: 'family',

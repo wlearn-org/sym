@@ -109,40 +109,47 @@ async function runIifeTest(page, bundle, exportKeys, origin) {
               family.dispose()
             }
           }
-          const pg = await lib.SymbolicRegressor.create({
-            strategy: 'family',
-            backend: 'polygrad',
-            hierarchical: true,
-            population: 8,
-            generations: 2,
-            terms: 2,
-            eliteCount: 2,
-            polishPasses: 1,
-            polishBatchSize: 8,
-            localRefineInterval: 1,
-            localRefineCount: 1,
-            batchSize: 8,
-            seed: 11,
-            operatorSet: 'basic',
-            polygrad: { core: 'wasm', device }
-          })
-          await pg.fit(X, y)
-          const pgPred = Array.from(pg.predict(X))
-          const pgLoaded = await lib.SymbolicRegressor.load(pg.save())
-          const pgPred2 = Array.from(pgLoaded.predict(X))
-          const devicePred = await pg.predictPolygrad(X)
-          const report = await pg.refinePolygrad(X, y, { epochs: 2, lr: 0.001 })
-          const pgOk =
-            pgPred.length === X.length &&
-            pgPred.every(Number.isFinite) &&
-            pgPred.every((v, i) => Math.abs(v - pgPred2[i]) < 1e-5) &&
-            pgPred.every((v, i) => Math.abs(v - devicePred[i]) < 1e-5) &&
-            report.status === 'ok' &&
-            pg.formula({ format: 'json' }).kind === 'sym.family.formula@3'
-          pgLoaded.dispose()
-          pg.dispose()
+          let pgOk = true, pgPreview
+          for (const polishMethod of ['coordinate', 'lm']) {
+            const pg = await lib.SymbolicRegressor.create({
+              strategy: 'family',
+              backend: 'polygrad',
+              hierarchical: true,
+              population: 8,
+              generations: 2,
+              terms: 2,
+              eliteCount: 2,
+              polishPasses: 1,
+              polishBatchSize: polishMethod === 'lm' ? 0 : 8,
+              polishMethod,
+              scaleAware: polishMethod === 'lm',
+              localRefineInterval: 1,
+              localRefineCount: 1,
+              batchSize: 8,
+              seed: 11,
+              operatorSet: ['add', 'mul', 'sin'],
+              polygrad: { core: 'wasm', device }
+            })
+            await pg.fit(X, y)
+            const pgPred = Array.from(pg.predict(X))
+            const pgLoaded = await lib.SymbolicRegressor.load(pg.save())
+            const pgPred2 = Array.from(pgLoaded.predict(X))
+            const devicePred = await pg.predictPolygrad(X)
+            const report = await pg.refinePolygrad(X, y, { epochs: 2, lr: 0.001 })
+            const passed =
+              pgPred.length === X.length &&
+              pgPred.every(Number.isFinite) &&
+              pgPred.every((v, i) => Math.abs(v - pgPred2[i]) < 1e-5) &&
+              pgPred.every((v, i) => Math.abs(v - devicePred[i]) < 1e-5) &&
+              report.status === 'ok' &&
+              pg.formula({ format: 'json' }).kind === 'sym.family.formula@3'
+            pgLoaded.dispose()
+            pg.dispose()
+            pgOk = pgOk && passed
+            pgPreview = pgPred.slice(0, 2)
+          }
           model.dispose()
-          return { ok: ok && pgOk, exports: exports.length, formula: f, pg: pgPred.slice(0, 2) }
+          return { ok: ok && pgOk, exports: exports.length, formula: f, pg: pgPreview }
         } catch (e) {
           return { ok: false, error: e.message, stack: e.stack }
         }

@@ -18,4 +18,5 @@ struct sym_family_model {
 };
 
 double sym_family_complexity(const candidate *c, int terms);
+int sym_family_lm_step(const double *, int, int, const double *, double, double *);
 #endif

@@ -31,6 +31,10 @@ export interface SymControls {
   ridge?: number
   immigrantRate?: number
   polishPasses?: number
+  /** Train-only scaling of family constant coordinates. Default false. */
+  scaleAware?: boolean
+  /** Family polish; lm requires polishPasses > 0 and polishBatchSize = 0. */
+  polishMethod?: 'coordinate' | 'lm'
   /** 0 keeps sequential polish; a positive size uses frozen-base proposal batches. */
   polishBatchSize?: number
   hierarchical?: boolean

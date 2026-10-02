@@ -195,7 +195,8 @@ if __name__ == "__main__":
 
 @pytest.mark.parametrize("hierarchical", [False, True])
 @pytest.mark.parametrize("classes", [0, 2, 3])
-def test_c_family_native_wasm_and_bundle_parity(classes, hierarchical):
+@pytest.mark.parametrize("method", ["coordinate", "lm"])
+def test_c_family_native_wasm_and_bundle_parity(classes, hierarchical, method):
     from wlearn_sym import SymbolicClassifier
 
     params = dict(
@@ -213,7 +214,9 @@ def test_c_family_native_wasm_and_bundle_parity(classes, hierarchical):
         polishPasses=2,
         localRefineInterval=1,
         localRefineCount=2,
-        polishBatchSize=16,
+        polishBatchSize=16 if method == "coordinate" else 0,
+        polishMethod=method,
+        scaleAware=method == "lm",
     )
     X = np.random.default_rng(420).uniform(-2, 2, (60, 3))
     labels = [91, -7, 123][:classes]

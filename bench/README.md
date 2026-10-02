@@ -22,6 +22,10 @@ SYM_LIB_PATH="$PWD/build/libsym.so" PYTHONPATH=py \
 The default arms are family search without polish, final polish, in-loop plus
 final polish, tree search, standardized ridge and histogram gradient boosting.
 The `during` control reuses coordinate proposals with QR readout refits.
+Additional arms `scaled`, `lm`, `scaled-lm` isolate train-only parameter scaling
+and finite-difference profiled damped least squares, using the same in-loop
+schedule. `lm` is a bounded damped step, not MINPACK or an analytic-gradient
+implementation. Keep final-fit and total pilot costs distinct when comparing it.
 Five search seeds see identical training/test data per task. Test data never
 enter fitting or timing pilots. Each Sym result is saved/reloaded and checked
 against an independent NumPy evaluator of its exported formula.

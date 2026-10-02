@@ -22,8 +22,10 @@ function graph(X, c, cols, params, clipParameters = true) {
       let p0 = params[`p0_${t}`],
         p1 = params[`p1_${t}`]
       if (clipParameters) {
-        p0 = p0.maximum(-16).minimum(16)
-        p1 = p1.maximum(-16).minimum(16)
+        const b0 = Math.abs(c.p0[t]) > 16 ? 2 * Math.abs(c.p0[t]) : 16
+        const b1 = Math.abs(c.p1[t]) > 16 ? 2 * Math.abs(c.p1[t]) : 16
+        p0 = p0.maximum(-b0).minimum(b0)
+        p1 = p1.maximum(-b1).minimum(b1)
       }
       const z = a.mul(p0).add(p1)
       if (op === 4) value = z.sin()

@@ -63,6 +63,10 @@ function config(p) {
   } catch (err) {
     throw new ValidationError(err.message)
   }
+  const scaled = get('scaleAware', 'scale_aware', false)
+  const method = get('polishMethod', 'polish_method', 'coordinate')
+  if (typeof scaled !== 'boolean' || !['coordinate', 'lm'].includes(method))
+    throw new ValidationError('invalid family optimizer options')
   const values = [
     p.population ?? 128,
     p.generations ?? 20,
@@ -84,7 +88,9 @@ function config(p) {
     get('polishBatchSize', 'polish_batch_size', 0),
     p.hierarchical == null ? 0 : typeof p.hierarchical === 'boolean' ? Number(p.hierarchical) : NaN,
     get('localRefineInterval', 'local_refine_interval', 0),
-    get('localRefineCount', 'local_refine_count', 0)
+    get('localRefineCount', 'local_refine_count', 0),
+    Number(scaled),
+    Number(method === 'lm')
   ]
   if (values.some(v => typeof v !== 'number' || !Number.isFinite(v)))
     throw new ValidationError('family parameters must be finite numbers')
@@ -350,12 +356,16 @@ class CFamilyEngine {
             this.params
           )
         }
-        const { coefficients, losses } = await scorer.score(descriptors)
-        const packed = new Float64Array(actual * (terms + 3))
+        const needResiduals = w._sym_family_search_residual_count(search) > 0
+        const { coefficients, losses, residuals } = await scorer.score(descriptors, needResiduals)
+        const width = terms + 3 + (needResiduals ? X.rows : 0)
+        const packed = new Float64Array(actual * width)
         for (let c = 0; c < actual; c++) {
-          packed.set(coefficients.subarray(c * (terms + 1), (c + 1) * (terms + 1)), c * (terms + 3))
-          packed[c * (terms + 3) + terms + 1] = losses[2 * c]
-          packed[c * (terms + 3) + terms + 2] = losses[2 * c + 1]
+          packed.set(coefficients.subarray(c * (terms + 1), (c + 1) * (terms + 1)), c * width)
+          packed[c * width + terms + 1] = losses[2 * c]
+          packed[c * width + terms + 2] = losses[2 * c + 1]
+          if (needResiduals)
+            packed.set(residuals.subarray(c * X.rows, (c + 1) * X.rows), c * width + terms + 3)
         }
         withArrays([packed], (w, ptr) => {
           if (w._sym_family_search_accept_results(search, identity, ptr, packed.length))

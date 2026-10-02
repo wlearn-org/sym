@@ -29,6 +29,7 @@ EXPORTED_FUNCTIONS='[
   "_sym_family_search_data",
   "_sym_family_search_solve",
   "_sym_family_search_accept_results",
+  "_sym_family_search_residual_count",
   "_sym_family_refine_data",
   "_sym_family_refine_accept",
   "_sym_family_search_finish",
@@ -92,6 +93,7 @@ emcc \
   "${PROJECT_DIR}/csrc/sym_tree_refine.c" \
   "${PROJECT_DIR}/csrc/sym_tree_io.c" \
   "${PROJECT_DIR}/csrc/sym_family.c" \
+  "${PROJECT_DIR}/csrc/sym_family_lm.c" \
   "${PROJECT_DIR}/csrc/sym_family_io.c" \
   "${PROJECT_DIR}/csrc/wl_api.c" \
   -I "${PROJECT_DIR}/csrc" \

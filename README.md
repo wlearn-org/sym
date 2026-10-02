@@ -87,6 +87,35 @@ plus random multi-parameter proposals, followed by selection. The actual round
 size is at least the coordinate-trial count. This changes the polish policy;
 transport `batchSize` (1–512, default `min(population, 512)`) does not change proposal/RNG order.
 
+Optional `localRefineInterval` and `localRefineCount` enable family polish during
+evolution. Set both positive, with `polishPasses > 0`; count is at most
+`min(population, 32)`. Every interval, before breeding, up to that many distinct
+best population candidates receive the same coordinate/batched polish and QR
+readout refits. Their accepted updates enter the next generation. Final polish
+still runs once; the last generation does not also receive in-loop polish.
+Both settings default to zero. The default coordinate method is derivative-free;
+quality gains are not established across datasets. C owns the schedule
+and both C and Polygrad scorers execute its proposals.
+
+Two further experimental controls are available for family search:
+
+- `scaleAware: true` learns input means/scales from training rows and searches
+  dimensionless nonlinear slopes/phases, with a mix of near-zero and signed-log
+  initial slopes. Saved formulas stay in original input units. This does not
+  scale targets or change the absolute complexity penalty.
+- `polishMethod: 'lm'` uses finite differences of QR-refitted residuals, then a
+  damped least-squares step. Set `polishPasses > 0` and leave `polishBatchSize` at
+  zero. It works for final and in-search polish. Steps must improve regularized
+  training loss and the existing validation objective before acceptance.
+
+Both are opt-in. LM differentiates the rounded readout numerically; it is not an
+analytic gradient; float32 residual differences can change its steps and search path. Each round adds probe fits and a residual workspace of up to
+`(2 * terms + 1) * (rows + terms)` doubles. Polygrad still evaluates features, QR factors, losses and residuals on the
+device; C owns the small coefficient and damped solves. The host receives
+training residuals for the latter. GPU reductions for that system are future work.
+Float32 storage and existing phase guards remain in force; large offsets may
+still require input preprocessing. See [benchmarks](bench/README.md).
+
 C fits readouts using centered/scaled double Givens QR for
 `mean_squared_error + ridge * sum(coef²)`, with an unpenalized intercept.
 Rank-deficient pivots receive zero coefficients; positive ridge is advised.
@@ -249,13 +278,3 @@ Hierarchical division can produce very large conservative feature bounds even
 from bounded input data. With Polygrad and trigonometric operators, this can
 trigger the cosine precision guard during search. Use the default flat family
 or the C backend for those searches; the error does not silently change backends.
-
-
-### In-loop family polish
-
-Optional `localRefineInterval` and `localRefineCount` run family polish before
-breeding every interval. Both default to zero; enable both with `polishPasses > 0`.
-Count is at most `min(population, 32)`. Final polish still runs once; the last
-generation does not also receive in-loop polish. Both scorers use the same C
-proposal schedule and QR readout refits. This is an experimental coordinate
-polish schedule, not an established general quality improvement.

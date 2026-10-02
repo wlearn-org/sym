@@ -20,6 +20,9 @@ function resolveStrategy(params, task) {
     throw new ValidationError('family strategy does not support FormulaTransformer')
   if (backend === 'polygrad' && strategy === 'tree')
     throw new ValidationError('tree search currently supports backend="c" only')
+  if (strategy !== 'family' &&
+      ['scaleAware', 'scale_aware', 'polishMethod', 'polish_method'].some(k => params[k] != null))
+    throw new ValidationError('constant optimizer options require strategy="family"')
   return { strategy, backend }
 }
 function familySearchSpace(tree) {

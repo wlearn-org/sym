@@ -59,6 +59,8 @@ def _declare(lib):
         _I,
     ]
     lib.sym_family_search_solve.restype = _I
+    lib.sym_family_search_residual_count.argtypes = [ctypes.c_void_p]
+    lib.sym_family_search_residual_count.restype = _I
     lib.sym_family_search_accept_results.argtypes = [
         ctypes.c_void_p,
         ctypes.c_uint32,

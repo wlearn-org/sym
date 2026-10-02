@@ -45,7 +45,7 @@ def _term(op, a, b, p0, p1, operators):
 
 
 class FamilyScorer:
-    """Own one runtime and reusable stages; arrays crossing back are O(batch*terms²)."""
+    """Own one runtime and reusable stages; LM additionally reads training residuals, O(batch*rows)."""
 
     def __init__(
         self,
@@ -247,7 +247,7 @@ class FamilyScorer:
         valid = (squared * (1 - mask)).sum(axis=1) / max(1, self.nvalid)
         return train.stack(valid, dim=1)
 
-    def _custom_loss(self, phi, y, mask, coef):
+    def _custom_loss(self, phi, y, mask, coef, residuals=False):
         b, n, t, anchor, nt, nv = (
             self.batch,
             self.rows,
@@ -262,24 +262,36 @@ class FamilyScorer:
                 v.flatten() for v in (out, features, target, train, weights)
             )
             c = UOp.range(out.ctx, b, 0)
-            r = UOp.range(out.ctx, n, 1, AxisType.REDUCE)
+            r = UOp.range(
+                out.ctx, n, 1, AxisType.LOOP if residuals else AxisType.REDUCE
+            )
             prediction = weights[c * (t + 1) + t]
             for j in range(t):
                 delta = (
                     features[(c * n + r) * t + j] - features[(c * n + anchor) * t + j]
                 )
                 prediction = prediction + delta * weights[c * (t + 1) + j]
-            squared = (prediction - target[r]) * (prediction - target[r])
+            delta = prediction - target[r]
+            if residuals:
+                return (
+                    out[c * n + r]
+                    .store(delta * train[r])
+                    .end(r, c)
+                    .sink(arg=KernelInfo(name="sym_family_residuals"))
+                )
+            squared = delta * delta
             a = out[c * 2].store((squared * train[r]).sum(r) / nt)
             v = out[c * 2 + 1].store((squared * (1 - train[r])).sum(r) / nv)
             return a.group(v).end(c).sink(arg=KernelInfo(name="sym_family_losses"))
 
-        return self._empty((b, 2)).custom_kernel(phi, y, mask, coef, fxn=kernel)[0]
+        return self._empty((b, n if residuals else 2)).custom_kernel(
+            phi, y, mask, coef, fxn=kernel
+        )[0]
 
     def _check_cosine_phase(self, descriptors):
         check_phases(self.feature_bounds, descriptors, self.npdtype)
 
-    def score(self, descriptors, *, inspect=False):
+    def score(self, descriptors, *, inspect=False, residuals=False):
         if self.rt is None:
             raise RuntimeError("family scorer is disposed")
         if descriptors.shape != (self.batch, self.terms, 5):
@@ -311,6 +323,17 @@ class FamilyScorer:
         losses = self.loss.run([phi, self.y, self.mask, self.coef]).numpy()
         if not self.nvalid:
             losses[:, 1] = losses[:, 0]
+        host_residuals = None
+        if residuals:
+            if not hasattr(self, "residual"):
+                self.residual = self._compile(
+                    "residuals",
+                    lambda a, b, c, d: self._custom_loss(a, b, c, d, True),
+                    [phi, self.y, self.mask, self.coef],
+                )
+            host_residuals = self.residual.run(
+                [phi, self.y, self.mask, self.coef]
+            ).numpy()
         self.calls += 1
         # All GPU work is complete after loss readback. Retire temporary graph
         # owners while retaining the compiled stages and their resident buffers.
@@ -334,6 +357,7 @@ class FamilyScorer:
         return {
             "coefficients": coefficients,
             "losses": losses,
+            "residuals": host_residuals,
             "ms": elapsed,
             "traffic": traffic,
             "features": phi.numpy() if inspect else None,

@@ -26,7 +26,9 @@ def family_graph(Tensor, X, candidate, rows, cols, params, clip_parameters=True)
         else:
             p0, p1 = params[f"p0_{t}"], params[f"p1_{t}"]
             if clip_parameters:
-                p0, p1 = p0.maximum(-16).minimum(16), p1.maximum(-16).minimum(16)
+                b0 = 2 * abs(candidate["p0"][t]) if abs(candidate["p0"][t]) > 16 else 16
+                b1 = 2 * abs(candidate["p1"][t]) if abs(candidate["p1"][t]) > 16 else 16
+                p0, p1 = p0.maximum(-b0).minimum(b0), p1.maximum(-b1).minimum(b1)
             z = a * p0 + p1
             if op == 4:
                 value = z.sin()

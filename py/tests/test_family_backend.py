@@ -243,3 +243,59 @@ def test_default_batch_tracks_population(monkeypatch):
         assert batches == [8]
     finally:
         model.dispose()
+
+
+@pytest.mark.parametrize("hierarchical", [False, True])
+def test_scaled_lm_public_polygrad(hierarchical):
+    X = np.column_stack([np.linspace(-0.01, 0.01, 64), np.sin(np.arange(64))])
+    y = np.sin(230 * X[:, 0] + 0.4) + 0.1 * X[:, 1]
+    params = dict(
+        strategy="family",
+        population=8,
+        eliteCount=2,
+        generations=2,
+        terms=2,
+        seed=11,
+        validationFraction=0.2,
+        scaleAware=True,
+        polishMethod="lm",
+        polishPasses=3,
+        hierarchical=hierarchical,
+        localRefineInterval=1,
+        localRefineCount=1,
+    )
+    c, pg = (
+        SymbolicRegressor(params),
+        SymbolicRegressor({**params, "backend": "polygrad"}),
+    )
+    try:
+        c.fit(X, y)
+        pg.fit(X, y)
+        np.testing.assert_allclose(c.predict(X), pg.predict(X), atol=1e-5, rtol=1e-5)
+    finally:
+        c.dispose()
+        pg.dispose()
+
+
+def test_scaled_constants_remain_the_start_of_postfit_adam():
+    X = np.linspace(-0.01, 0.01, 64).reshape(-1, 1)
+    y = np.sin(230 * X[:, 0] + 0.4)
+    m = SymbolicRegressor(
+        dict(
+            strategy="family",
+            operatorSet=["sin"],
+            terms=1,
+            population=8,
+            eliteCount=2,
+            generations=2,
+            scaleAware=True,
+            polishMethod="lm",
+            polishPasses=3,
+        )
+    )
+    try:
+        m.fit(X, y)
+        report = m.refine_polygrad(X, y, epochs=1, lr=1e-10)
+        assert report["afterLoss"] < 1e-4
+    finally:
+        m.dispose()

@@ -30,6 +30,14 @@ sym_family_model_t *sym_family_fit_refined(const double *X, int32_t rows, int32_
                                            const double *y, int32_t task, int32_t classes,
                                            const sym_family_params_t *p, int32_t interval,
                                            int32_t count);
+/* method 0: coordinate polish, 1: finite-difference profiled LM (requires
+ * polish > 0, polish_batch == 0). scaled learns train-only input geometry.
+ * interval/count have the same meaning as in sym_family_fit_refined.
+ * Model storage and the original parameter struct remain unchanged. */
+sym_family_model_t *sym_family_fit_optimized(const double *X, int32_t rows, int32_t cols,
+                                             const double *y, int32_t task, int32_t classes,
+                                             const sym_family_params_t *p, int32_t interval,
+                                             int32_t count, int32_t scaled, int32_t method);
 /* Feature-tile protocol: descriptors are [candidate,term,5] doubles containing
  * featureA,featureB,operator,p0,p1. Evaluators return [candidate,row,term] doubles.
  * stage 0 accumulates train-only moments, 1 updates QR, 2 computes losses.
@@ -49,6 +57,7 @@ sym_family_search_t *sym_family_search_new(const double *X, int32_t rows, int32_
                                            int32_t tile_rows);
 /* Configure only before the first proposal; invalid changes leave state intact. */
 int sym_family_search_set_refinement(sym_family_search_t *s, int32_t interval, int32_t count);
+int sym_family_search_set_optimizer(sym_family_search_t *s, int32_t scaled, int32_t method);
 int sym_family_search_propose(sym_family_search_t *s, const sym_family_batch_t **out);
 const sym_family_batch_t *sym_family_search_pending(const sym_family_search_t *s);
 int sym_family_search_score(const sym_family_search_t *s, uint32_t id, double *out, int32_t count);
@@ -67,6 +76,10 @@ int sym_family_search_data(const sym_family_search_t *s, double *out, int32_t co
 int sym_family_search_solve(const sym_family_search_t *s, uint32_t id, const double *factors,
                             int32_t factor_count, const double *stats, int32_t stats_count,
                             int32_t width, double *coefficients, int32_t coefficient_count);
+/* A nonzero count requests one train-masked residual per candidate/row.
+ * Append each candidate's rows residuals after its standard terms+3 result.
+ * C owns the damped solve; device evaluators keep feature/readout computation. */
+int sym_family_search_residual_count(const sym_family_search_t *s);
 int sym_family_search_accept_results(sym_family_search_t *s, uint32_t id, const double *results,
                                      int32_t count);
 uint64_t sym_family_search_evaluations(const sym_family_search_t *s);

@@ -69,6 +69,10 @@ def _config(p):
     if "hierarchical" in p and not isinstance(p["hierarchical"], bool):
         raise ValueError("hierarchical must be boolean")
     mask = sum(1 << op for op in resolve_operator_ids(p))
+    scaled = get("scaleAware", "scale_aware", False)
+    method = get("polishMethod", "polish_method", "coordinate")
+    if type(scaled) is not bool or method not in ("coordinate", "lm"):
+        raise ValueError("invalid family optimizer options")
     values = [
         p.get("population", 128),
         p.get("generations", 20),
@@ -91,6 +95,8 @@ def _config(p):
         int(p.get("hierarchical", False)),
         get("localRefineInterval", "local_refine_interval", 0),
         get("localRefineCount", "local_refine_count", 0),
+        int(scaled),
+        int(method == "lm"),
     ]
     if any(
         isinstance(v, (bool, str)) or not isinstance(v, (int, float, np.number))
@@ -337,10 +343,12 @@ class CFamilyEngine:
                         or (options if hasattr(options, "Tensor") else None),
                         dtype=self.params.get("scorerDtype", "float64"),
                     )
-                result = scorer.score(descriptors)
+                residuals = lib.sym_family_search_residual_count(search) > 0
+                result = scorer.score(descriptors, residuals=residuals)
                 packed = np.ascontiguousarray(
                     np.concatenate(
-                        [result["coefficients"][:actual], result["losses"][:actual]],
+                        [result["coefficients"][:actual], result["losses"][:actual]]
+                        + ([result["residuals"][:actual]] if residuals else []),
                         axis=1,
                     )
                 )

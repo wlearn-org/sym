@@ -4,7 +4,7 @@ project(sym C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-set(CORE_SOURCES src/sym.c src/sym_tree_refine.c src/sym_tree_io.c src/sym_family.c src/sym_family_io.c src/wl_api.c)
+set(CORE_SOURCES src/sym.c src/sym_tree_refine.c src/sym_tree_io.c src/sym_family.c src/sym_family_lm.c src/sym_family_io.c src/wl_api.c)
 
 add_library(sym SHARED ${CORE_SOURCES})
 target_include_directories(sym PUBLIC src)

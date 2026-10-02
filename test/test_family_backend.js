@@ -45,6 +45,7 @@ async function main() {
     else process.env.POLY_DEV = previous
     envModel.dispose()
   }
+  for (const polishMethod of ['coordinate', 'lm'])
   for (const classes of [0, 2, 3])
     for (const hierarchical of [false, true]) {
       const X = Array.from({ length: 64 }, (_, i) => [
@@ -61,7 +62,9 @@ async function main() {
         generations: 2,
         terms: 3,
         polishPasses: 2,
-        polishBatchSize: 20,
+        polishBatchSize: polishMethod === 'lm' ? 0 : 20,
+        polishMethod,
+        scaleAware: polishMethod === 'lm',
         seed: 11,
         validationFraction: 0.2,
         localRefineInterval: 1,

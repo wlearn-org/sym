@@ -24,6 +24,9 @@ ARMS = (
     "family",
     "final",
     "during",
+    "scaled",
+    "lm",
+    "scaled-lm",
     "tree",
     "ridge",
     "histgb",
@@ -48,10 +51,14 @@ def fit_model(arm, X, y, seed, generations, settings, runtime=None):
     )
     if arm != "tree":
         params["terms"] = settings["terms"]
-    if arm in ("final", "during", "during-pg"):
+    if arm in ("final", "during", "during-pg", "scaled"):
         params.update(polishPasses=2, polishBatchSize=16)
-    if arm in ("during", "during-pg"):
+    if arm in ("during", "during-pg", "scaled", "lm", "scaled-lm"):
         params.update(localRefineInterval=3, localRefineCount=2)
+    if arm in ("scaled", "scaled-lm"):
+        params.update(scaleAware=True)
+    if arm in ("lm", "scaled-lm"):
+        params.update(polishMethod="lm", polishPasses=2)
     if arm.endswith("-pg"):
         params.update(backend="polygrad", polygrad=runtime)
     model = SymbolicRegressor(params)
@@ -356,6 +363,7 @@ def main():
         "bench/quality_data.py",
         "bench/quality_reference.py",
         "src/sym_family.c",
+        "src/sym_family_lm.c",
         "src/sym_family.h",
         "src/wl_api.c",
         "py/wlearn_sym/_family_c.py",

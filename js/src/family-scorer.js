@@ -207,7 +207,7 @@ class FamilyScorer {
     const stats = anchor.cat(mean, scale, { dim: 2 }).reshape(b, 3 * t)
     return [design.contiguous(), stats.contiguous()]
   }
-  losses(phi, y, mask, coef) {
+  losses(phi, y, mask, coef, residuals = false) {
     const { pg, batch: b, rows: n, terms: t, anchor, nt, nv } = this
     const kernel = (out, features, target, train, weights) => {
       out = out.flatten()
@@ -216,7 +216,7 @@ class FamilyScorer {
       train = train.flatten()
       weights = weights.flatten()
       const c = pg.uop.range(b, 0),
-        r = pg.uop.range(n, 1, pg.uop.AxisType.REDUCE)
+        r = pg.uop.range(n, 1, residuals ? pg.uop.AxisType.LOOP : pg.uop.AxisType.REDUCE)
       let pred = weights.index(c.mul(t + 1).add(t))
       for (let j = 0; j < t; j++) {
         const value = features.index(c.mul(n).add(r).mul(t).add(j))
@@ -226,13 +226,16 @@ class FamilyScorer {
       const delta = pred.sub(target.index(r)),
         squared = delta.mul(delta)
       const m = train.index(r)
+      if (residuals)
+        return out.index(c.mul(n).add(r)).store(delta.mul(m)).end(r, c)
+          .sink(new pg.uop.KernelInfo('sym_family_residuals'))
       const first = out.index(c.mul(2)).store(squared.mul(m).sum(r).div(nt))
       const second = out
         .index(c.mul(2).add(1))
         .store(squared.mul(m.neg().add(1)).sum(r).div(Math.max(1, nv)))
       return first.group(second).end(c).sink(new pg.uop.KernelInfo('sym_family_losses'))
     }
-    return pg.Tensor.empty([b, 2], { dtype: this.dtype }).customKernel(
+    return pg.Tensor.empty([b, residuals ? n : 2], { dtype: this.dtype }).customKernel(
       phi,
       y,
       mask,
@@ -240,7 +243,7 @@ class FamilyScorer {
       kernel
     )[0]
   }
-  async score(descriptors) {
+  async score(descriptors, needResiduals = false) {
     if (!this.pg) throw new ValidationError('family scorer is disposed')
     this.checkPhase(descriptors)
     const [indices, constants] = this.pack(descriptors)
@@ -266,8 +269,15 @@ class FamilyScorer {
     ).toTypedArrayAsync()
     if (!losses.every(Number.isFinite)) throw new ValidationError('nonfinite device losses')
     if (!this.nv) for (let c = 0; c < this.batch; c++) losses[2 * c + 1] = losses[2 * c]
+    let residuals
+    if (needResiduals) {
+      if (!this.residual)
+        this.residual = await this.compile((a, b, c, d) => this.losses(a, b, c, d, true),
+          [phi, this.y, this.mask, this.coef])
+      residuals = await (await this.residual.run([phi, this.y, this.mask, this.coef])).toTypedArrayAsync()
+    }
     if (++this.calls % 32 === 0) this.pg.collect()
-    return { coefficients, losses }
+    return { coefficients, losses, residuals }
   }
   dispose() {
     for (const stage of this.stages.reverse()) stage.dispose()

@@ -22,6 +22,7 @@ EXPECTED_EXPORTS=(
   sym_family_search_data
   sym_family_search_solve
   sym_family_search_accept_results
+  sym_family_search_residual_count
   sym_family_refine_data
   sym_family_refine_accept
   sym_family_search_finish

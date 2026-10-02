@@ -67,6 +67,21 @@ Family controls: `terms` 1–32 (default 6), `population` (128), `generations` (
 `polishPasses` (0), `polishBatchSize` (0), `hierarchical` (False). Positive polish
 batch sizes freeze a base and score independent parameter variants. Zero keeps
 sequential coordinate polish. Hierarchical terms may reference earlier terms.
+`scaleAware` (default false) searches nonlinear constants in train-only
+standardized coordinates while saving formulas in original input units.
+`polishMethod` defaults to `coordinate`; `lm` selects finite-difference damped
+least squares with QR readout refits (`polishPasses > 0`, `polishBatchSize = 0`).
+LM requires both training and validation-objective improvement for acceptance.
+Float32 residual differences can change LM steps and the resulting search path.
+It adds O(rows × terms) host residual storage/transfer with Polygrad; feature evaluation
+and QR factorization still execute on the selected device. These are experiments,
+not default changes. Target scaling and the absolute complexity penalty are unchanged.
+
+Optional `localRefineInterval` and `localRefineCount` (both default 0) run the same
+polish before breeding every interval. Enable both with `polishPasses > 0`;
+count is at most `min(population, 32)`. Final polish still runs. This experimental
+schedule refits readouts with QR and works with either scorer; it is not gradient
+optimization and does not change defaults. Snake-case aliases are also accepted.
 `operatorSet` accepts basic/smooth/full or a list; `operators` selects portable
 built-ins. Arbitrary Python callbacks are not artifact operators.
 
@@ -113,13 +128,3 @@ Hierarchical division can produce very large conservative feature bounds even
 from bounded input data. With Polygrad and trigonometric operators, this can
 trigger the cosine precision guard during search. Use the default flat family
 or the C backend for those searches; the error does not silently change backends.
-
-
-### In-loop family polish
-
-Optional `localRefineInterval` and `localRefineCount` run family polish before
-breeding every interval. Both default to zero; enable both with `polishPasses > 0`.
-Count is at most `min(population, 32)`. Final polish still runs once; the last
-generation does not also receive in-loop polish. Both scorers use the same C
-proposal schedule and QR readout refits. This is an experimental coordinate
-polish schedule, not an established general quality improvement.

@@ -21,6 +21,16 @@ def resolve_strategy(params, task):
         raise ValueError("family strategy does not support FormulaTransformer")
     if backend == "polygrad" and strategy == "tree":
         raise ValueError('tree search currently supports backend="c" only')
+    if strategy != "family" and any(
+        params.get(k) is not None
+        for k in (
+            "scaleAware",
+            "scale_aware",
+            "polishMethod",
+            "polish_method",
+        )
+    ):
+        raise ValueError('constant optimizer options require strategy="family"')
     return strategy, backend
 
 

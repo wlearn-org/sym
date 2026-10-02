@@ -2,6 +2,7 @@
 #include "sym_family_internal.h"
 #include "sym_internal.h"
 #include <float.h>
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -220,7 +221,34 @@ static int random_op(uint32_t *rng, uint32_t mask) {
             ids[count++] = i;
     return ids[randint(rng, count)];
 }
-static void init_candidate(candidate *c, uint32_t *rng, int cols, const sym_family_params_t *p) {
+/* Search coordinates are dimensionless slope/phase when geometry is enabled.
+ * Artifacts still store original-input coefficients; inference needs no scaler. */
+static void gene_get(const candidate *c, int t, int cols, const double *geometry, double q[2]) {
+    if (!geometry) {
+        q[0] = c->p0[t];
+        q[1] = c->p1[t];
+        return;
+    }
+    int a = c->a[t];
+    double mean = geometry && a < cols ? geometry[a] : 0;
+    double scale = geometry && a < cols ? geometry[cols + a] : 1;
+    q[0] = c->p0[t] * scale;
+    q[1] = c->p1[t] + mean * c->p0[t];
+}
+static void gene_set(candidate *c, int t, int cols, const double *geometry, const double q[2]) {
+    if (!geometry) {
+        c->p0[t] = f32(clamp(q[0], -16, 16));
+        c->p1[t] = f32(clamp(q[1], -16, 16));
+        return;
+    }
+    int a = c->a[t];
+    double mean = geometry && a < cols ? geometry[a] : 0;
+    double scale = geometry && a < cols ? geometry[cols + a] : 1;
+    c->p0[t] = f32(clamp(q[0], -16, 16) / scale);
+    c->p1[t] = f32(clamp(q[1], -16, 16) - mean * c->p0[t]);
+}
+static void init_candidate(candidate *c, uint32_t *rng, int cols, const sym_family_params_t *p,
+                           const double *geometry) {
     memset(c, 0, sizeof(*c));
     for (int t = 0; t < p->terms; t++) {
         c->a[t] = randint(rng, cols + (p->hierarchical ? t : 0));
@@ -228,27 +256,36 @@ static void init_candidate(candidate *c, uint32_t *rng, int cols, const sym_fami
         c->op[t] = random_op(rng, p->operators);
         c->p0[t] = f32(4 * signed_uniform(rng));
         c->p1[t] = f32(4 * signed_uniform(rng));
+        if (geometry && c->op[t] >= 4) {
+            double u = c->p0[t] / 4;
+            double q[2] = {fabs(u) < .1 ? 4 * u : copysign(exp2(-3 + 6 * fabs(u)), u), c->p1[t]};
+            gene_set(c, t, cols, geometry, q);
+        }
     }
     canonicalize(c, p->terms);
 }
 /* Adapted symcpg mutation schedule; coefficients are refit, not mutated. */
-static void mutate(candidate *c, uint32_t *rng, int cols, int gen, const sym_family_params_t *p) {
+static void mutate(candidate *c, uint32_t *rng, int cols, int gen, const sym_family_params_t *p,
+                   const double *geometry) {
     double scale = .08 + .92 * (1 - (double)gen / p->generations);
     for (int t = 0; t < p->terms; t++) {
+        double q[2];
+        gene_get(c, t, cols, geometry, q);
         if (uniform(rng) < p->mutation_rate)
             c->a[t] = randint(rng, cols + (p->hierarchical ? t : 0));
         if (uniform(rng) < p->mutation_rate)
             c->b[t] = randint(rng, cols + (p->hierarchical ? t : 0));
         if (uniform(rng) < p->mutation_rate)
             c->op[t] = random_op(rng, p->operators);
-        c->p0[t] = f32(clamp(c->p0[t] + signed_uniform(rng) * 1.5 * scale, -16, 16));
-        c->p1[t] = f32(clamp(c->p1[t] + signed_uniform(rng) * 1.5 * scale, -16, 16));
+        q[0] += signed_uniform(rng) * 1.5 * scale;
+        q[1] += signed_uniform(rng) * 1.5 * scale;
+        gene_set(c, t, cols, geometry, q);
     }
     canonicalize(c, p->terms);
     c->ready = 0;
 }
 static void evolve(candidate *pop, candidate *next, uint32_t *rng, int cols, int gen,
-                   const sym_family_params_t *p) {
+                   const sym_family_params_t *p, const double *geometry) {
     for (int island = 0; island < p->islands; island++) {
         int start = island * p->population / p->islands,
             end = (island + 1) * p->population / p->islands;
@@ -264,7 +301,7 @@ static void evolve(candidate *pop, candidate *next, uint32_t *rng, int cols, int
             if (i < start + elite)
                 next[i] = pop[i];
             else if (i >= end - immigrants)
-                init_candidate(&next[i], rng, cols, p);
+                init_candidate(&next[i], rng, cols, p, geometry);
             else {
                 next[i] = pop[start + randint(rng, pool)];
                 if (uniform(rng) < p->crossover_rate) {
@@ -278,7 +315,7 @@ static void evolve(candidate *pop, candidate *next, uint32_t *rng, int cols, int
                             next[i].p1[t] = other->p1[t];
                         }
                 }
-                mutate(&next[i], rng, cols, gen, p);
+                mutate(&next[i], rng, cols, gen, p, geometry);
             }
             next[i].ordinal = i;
         }
@@ -298,7 +335,9 @@ enum family_phase { FAMILY_POPULATION, FAMILY_POLISH, FAMILY_DONE, FAMILY_TAKEN 
 struct sym_family_search {
     sym_family_model_t *model;
     sym_family_params_t params;
-    double *X, *y, *descriptors;
+    double *X, *y, *descriptors, *geometry, *lm_residuals;
+    int lm_method, lm_stage, lm_cursor, lm_start, lm_parameters, lm_terms[64];
+    double lm_increments[64], lm_damping;
     uint8_t *validation;
     candidate *population, *offspring, *working;
     candidate selected, trial;
@@ -381,13 +420,60 @@ static void family_start_head(sym_family_search_t *s) {
             s->target_mean += (family_target(s, r) - s->target_mean) / ++n;
     s->rng = s->params.seed + (uint32_t)s->head * 104729u;
     for (int i = 0; i < s->params.population; i++) {
-        init_candidate(&s->population[i], &s->rng, s->cols, &s->params);
+        init_candidate(&s->population[i], &s->rng, s->cols, &s->params, s->geometry);
         s->population[i].ordinal = i;
     }
     s->generation = s->cursor = s->stale = 0;
     s->refined = s->refining = 0;
     s->best = DBL_MAX;
     s->phase = FAMILY_POPULATION;
+}
+int sym_family_search_set_optimizer(sym_family_search_t *s, int32_t scaled, int32_t method) {
+    if (!s || s->serial || (scaled != 0 && scaled != 1) || (method != 0 && method != 1) ||
+        (method && (!s->params.polish || s->params.polish_batch ||
+                    s->rows > INT_MAX / s->capacity - s->params.terms - 3)))
+        return fail("invalid family optimizer options or search already started");
+    double *geometry = NULL, *residuals = NULL;
+    if (scaled) {
+        geometry = calloc((size_t)2 * s->cols, sizeof(double));
+        if (!geometry)
+            return fail("out of memory allocating family scaling statistics");
+        int n = 0;
+        for (int r = 0; r < s->rows; r++) {
+            if (s->validation[r])
+                continue;
+            n++;
+            for (int j = 0; j < s->cols; j++) {
+                double value = s->X[(size_t)r * s->cols + j];
+                double d = value - geometry[j];
+                geometry[j] += d / n;
+                geometry[s->cols + j] += d * (value - geometry[j]);
+            }
+        }
+        for (int j = 0; j < s->cols; j++) {
+            double sd = sqrt(fmax(0, geometry[s->cols + j] / n));
+            if (sd == 0)
+                sd = 1;
+            geometry[s->cols + j] = fmax(sd, 32 * fmax(1, fabs(geometry[j])) / FLT_MAX);
+        }
+    }
+    if (method) {
+        size_t stride = (size_t)s->rows + s->params.terms;
+        size_t columns = 2 * s->params.terms + 1;
+        if (stride > SIZE_MAX / sizeof(double) / columns ||
+            !(residuals = calloc(stride * columns, sizeof(double)))) {
+            free(geometry);
+            return fail("out of memory allocating family LM residual workspace");
+        }
+    }
+    free(s->geometry);
+    free(s->lm_residuals);
+    s->geometry = geometry;
+    s->lm_residuals = residuals;
+    s->lm_method = method;
+    /* Initial proposals must use the new geometry, with exactly the same seed. */
+    family_start_head(s);
+    return 0;
 }
 void sym_family_search_free(sym_family_search_t *s) {
     if (!s)
@@ -402,6 +488,8 @@ void sym_family_search_free(sym_family_search_t *s) {
     free(s->slots);
     free(s->qr);
     free(s->descriptors);
+    free(s->geometry);
+    free(s->lm_residuals);
     free(s);
 }
 /* Shared split for search and post-fit refinement. Calibration/validation rows
@@ -536,6 +624,13 @@ static void family_begin_polish(sym_family_search_t *s, const candidate *base) {
     s->polish_sign = -1;
     s->polish_step = .75;
     s->polish_cursor = 0;
+    s->lm_stage = s->lm_cursor = s->lm_parameters = 0;
+    s->lm_damping = 1e-3;
+    for (int t = 0; t < s->params.terms; t++)
+        if (base->op[t] >= 4) {
+            s->lm_terms[s->lm_parameters++] = t;
+            s->lm_terms[s->lm_parameters++] = t;
+        }
 }
 /* Select slots without sorting the population: sorting across island boundaries
  * would silently change breeding membership. Exact duplicate genes get one slot. */
@@ -581,6 +676,64 @@ static void family_finish_polish(sym_family_search_t *s) {
         s->phase = FAMILY_POPULATION;
     }
 }
+static int family_lm_work(sym_family_search_t *s) {
+    if (!s->lm_parameters || s->polish_pass >= s->params.polish)
+        return 0;
+    if (!s->lm_cursor && !s->lm_stage)
+        s->polish_base = s->selected;
+    s->count = 0;
+    s->lm_start = s->lm_cursor;
+    if (!s->lm_stage) {
+        while (s->count < s->capacity && s->lm_cursor <= s->lm_parameters) {
+            int index = s->lm_cursor++;
+            candidate c = s->polish_base;
+            if (index) {
+                int j = index - 1, t = s->lm_terms[j], param = j % 2;
+                double q[2], after[2];
+                gene_get(&c, t, s->cols, s->geometry, q);
+                double old = q[param], h = .002 * fmax(1, fabs(old));
+                q[param] += old + h > 16 ? -h : h;
+                gene_set(&c, t, s->cols, s->geometry, q);
+                gene_get(&c, t, s->cols, s->geometry, after);
+                s->lm_increments[j] = after[param] - old;
+            }
+            c.ready = 0;
+            s->working[s->count++] = c;
+        }
+    } else {
+        double step[64];
+        if (sym_family_lm_step(s->lm_residuals, s->rows + s->params.terms, s->lm_parameters,
+                               s->lm_increments, s->lm_damping, step)) {
+            /* A nonfinite probe is not a usable Jacobian. End this refinement
+             * without accepting a surrogate or changing the selected formula. */
+            s->polish_pass = s->params.polish;
+            return 0;
+        }
+        candidate c = s->polish_base;
+        for (int j = 0; j < s->lm_parameters; j += 2) {
+            int t = s->lm_terms[j];
+            double q[2];
+            gene_get(&c, t, s->cols, s->geometry, q);
+            q[0] += step[j];
+            q[1] += step[j + 1];
+            gene_set(&c, t, s->cols, s->geometry, q);
+        }
+        c.ready = 0;
+        s->working[s->count++] = c;
+    }
+    return family_begin_work(s) + 1;
+}
+int sym_family_search_residual_count(const sym_family_search_t *s) {
+    return s && s->pending && s->phase == FAMILY_POLISH && s->lm_method && !s->lm_stage
+               ? s->count * s->rows
+               : 0;
+}
+static double training_objective(const candidate *c, int terms, double ridge) {
+    double value = c->train;
+    for (int j = 0; j < terms; j++)
+        value += ridge * c->coef[j] * c->coef[j];
+    return value;
+}
 /* Each batch-polish round freezes its base across all transport chunks. This
  * preserves the proposal stream and chosen winner when CPU/GPU capacities differ.
  * Unlike sequential coordinate polish, no accepted trial changes this round. */
@@ -606,14 +759,19 @@ static int family_polish_batch(sym_family_search_t *s) {
         candidate c = s->polish_base;
         if (index < 4 * n) {
             int t = active[index / 4], param = (index / 2) % 2;
-            double *value = param ? &c.p1[t] : &c.p0[t];
-            *value = f32(clamp(*value + (index % 2 ? 1 : -1) * s->polish_step, -16, 16));
+            double q[2];
+            gene_get(&c, t, s->cols, s->geometry, q);
+            q[param] += (index % 2 ? 1 : -1) * s->polish_step;
+            gene_set(&c, t, s->cols, s->geometry, q);
         } else {
             int changes = 1 + randint(&s->rng, n < 4 ? n : 4);
             for (int j = 0; j < changes; j++) {
                 int t = active[randint(&s->rng, n)];
-                double *value = uniform(&s->rng) < .5 ? &c.p0[t] : &c.p1[t];
-                *value = f32(clamp(*value + signed_uniform(&s->rng) * s->polish_step, -16, 16));
+                int param = uniform(&s->rng) < .5 ? 0 : 1;
+                double q[2];
+                gene_get(&c, t, s->cols, s->geometry, q);
+                q[param] += signed_uniform(&s->rng) * s->polish_step;
+                gene_set(&c, t, s->cols, s->geometry, q);
             }
         }
         canonicalize(&c, s->params.terms);
@@ -646,8 +804,7 @@ static int family_next_work(sym_family_search_t *s) {
              * must enter the population before breeding, through the same scorer. */
             if (!s->refined && s->local_refine_interval &&
                 s->generation + 1 < s->params.generations &&
-                (s->generation + 1) % s->local_refine_interval == 0 &&
-                family_begin_refinement(s))
+                (s->generation + 1) % s->local_refine_interval == 0 && family_begin_refinement(s))
                 continue;
             double loss = s->model->archive[(size_t)s->head * s->params.frontier].objective;
             if (loss + s->params.tol < s->best) {
@@ -659,7 +816,8 @@ static int family_next_work(sym_family_search_t *s) {
                 (s->params.patience > 0 && s->stale >= s->params.patience)) {
                 family_begin_polish(s, &s->model->archive[(size_t)s->head * s->params.frontier]);
             } else {
-                evolve(s->population, s->offspring, &s->rng, s->cols, s->generation, &s->params);
+                evolve(s->population, s->offspring, &s->rng, s->cols, s->generation, &s->params,
+                       s->geometry);
                 candidate *tmp = s->population;
                 s->population = s->offspring;
                 s->offspring = tmp;
@@ -668,6 +826,12 @@ static int family_next_work(sym_family_search_t *s) {
                 s->refined = 0;
             }
         } else if (s->phase == FAMILY_POLISH) {
+            if (s->lm_method) {
+                if (family_lm_work(s))
+                    return 1;
+                family_finish_polish(s);
+                continue;
+            }
             if (s->params.polish_batch) {
                 if (family_polish_batch(s))
                     return 1;
@@ -688,9 +852,10 @@ static int family_next_work(sym_family_search_t *s) {
                 // One dependent coordinate trial per work unit, never a batch
                 // of trials built from an already obsolete selected candidate.
                 s->trial = s->selected;
-                double *value =
-                    s->polish_param ? &s->trial.p1[s->polish_term] : &s->trial.p0[s->polish_term];
-                *value = f32(clamp(*value + s->polish_sign * s->polish_step, -16, 16));
+                double q[2];
+                gene_get(&s->trial, s->polish_term, s->cols, s->geometry, q);
+                q[s->polish_param] += s->polish_sign * s->polish_step;
+                gene_set(&s->trial, s->polish_term, s->cols, s->geometry, q);
                 s->working[0] = s->trial;
                 s->count = 1;
                 return family_begin_work(s) + 1;
@@ -778,7 +943,17 @@ static void family_finish_pass(sym_family_search_t *s) {
             if (s->phase == FAMILY_POPULATION) {
                 s->population[s->slots[c]] = *cand;
                 archive_candidate(s->model, s->head, cand);
-            } else if (cand->objective + s->params.tol < s->selected.objective) {
+            } else if (s->lm_method && !s->lm_stage) {
+                int column = s->lm_start + c;
+                double *out = s->lm_residuals + (size_t)column * (s->rows + terms);
+                for (int j = 0; j < terms; j++)
+                    out[s->rows + j] = sqrt(q->n * s->params.ridge) * cand->coef[j];
+                if (q->invalid)
+                    out[0] = NAN;
+            } else if (cand->objective + s->params.tol < s->selected.objective &&
+                       (!s->lm_method ||
+                        training_objective(cand, terms, s->params.ridge) <
+                            training_objective(&s->selected, terms, s->params.ridge))) {
                 s->selected = *cand;
                 s->polish_improved = 1;
             }
@@ -787,6 +962,19 @@ static void family_finish_pass(sym_family_search_t *s) {
     if (++s->pass == 3) {
         s->count = 0;
         if (s->phase == FAMILY_POLISH) {
+            if (s->lm_method) {
+                if (!s->lm_stage) {
+                    if (s->lm_cursor > s->lm_parameters)
+                        s->lm_stage = 1;
+                } else {
+                    s->lm_damping = s->polish_improved ? fmax(1e-9, s->lm_damping / 3)
+                                                       : fmin(1e9, s->lm_damping * 10);
+                    s->polish_improved = 0;
+                    s->polish_pass++;
+                    s->lm_stage = s->lm_cursor = 0;
+                }
+                return;
+            }
             if (s->params.polish_batch) {
                 if (s->polish_cursor == s->polish_total) {
                     if (!s->polish_improved)
@@ -838,6 +1026,9 @@ int sym_family_search_accept(sym_family_search_t *s, uint32_t id, const double *
                 qr_row(q, phi, target, terms);
             else if (s->pass == 2) {
                 double pred = prediction(cand, phi, terms), delta = pred - target;
+                if (s->phase == FAMILY_POLISH && s->lm_method && !s->lm_stage)
+                    s->lm_residuals[(size_t)(s->lm_start + c) * (s->rows + terms) + row] =
+                        validation ? 0 : delta;
                 if (!isfinite(f32(pred)) || !isfinite(delta * delta))
                     q->invalid = 1;
                 if (validation) {
@@ -913,29 +1104,39 @@ int sym_family_search_solve(const sym_family_search_t *s, uint32_t id, const dou
 }
 int sym_family_search_accept_results(sym_family_search_t *s, uint32_t id, const double *results,
                                      int32_t count) {
-    if (!fresh_reduced_batch(s, id) || !results || count != s->count * (s->params.terms + 3))
+    int residuals = sym_family_search_residual_count(s) != 0;
+    if (!fresh_reduced_batch(s, id) || !results ||
+        count != s->count * (s->params.terms + 3 + (residuals ? s->rows : 0)))
         return fail("invalid family reduced result state/shape");
     int terms = s->params.terms, nv = 0;
+    int width = terms + 3 + (residuals ? s->rows : 0);
     for (int i = 0; i < count; i++)
         if (!isfinite(results[i]))
             return fail("nonfinite family reduced result");
     for (int c = 0; c < s->count; c++) {
-        const double *r = results + (size_t)c * (terms + 3);
+        const double *r = results + (size_t)c * width;
         for (int j = 0; j < terms; j++)
             if (f32(r[j]) != r[j])
                 return fail("family coefficients must be rounded to float32 before scoring");
         if (r[terms + 1] < 0 || r[terms + 2] < 0)
             return fail("negative family loss");
+        if (residuals)
+            for (int row = 0; row < s->rows; row++)
+                if (s->validation[row] && r[terms + 3 + row] != 0)
+                    return fail("family LM residuals must mask validation rows");
     }
     for (int r = 0; r < s->rows; r++)
         nv += s->validation[r] != 0;
     for (int c = 0; c < s->count; c++) {
-        const double *r = results + (size_t)c * (terms + 3);
+        const double *r = results + (size_t)c * width;
         family_qr *q = &s->qr[c];
         memcpy(s->working[c].coef, r, terms * sizeof(double));
         s->working[c].bias = r[terms];
         q->n = s->rows - nv;
         q->nv = nv;
+        if (residuals)
+            memcpy(s->lm_residuals + (size_t)(s->lm_start + c) * (s->rows + terms), r + terms + 3,
+                   (size_t)s->rows * sizeof(double));
         q->train = r[terms + 1] * q->n;
         q->valid = r[terms + 2] * nv;
     }
@@ -965,12 +1166,19 @@ sym_family_model_t *sym_family_fit_refined(const double *X, int32_t rows, int32_
                                            const double *y, int32_t task, int32_t classes,
                                            const sym_family_params_t *p, int32_t interval,
                                            int32_t count) {
+    return sym_family_fit_optimized(X, rows, cols, y, task, classes, p, interval, count, 0, 0);
+}
+sym_family_model_t *sym_family_fit_optimized(const double *X, int32_t rows, int32_t cols,
+                                             const double *y, int32_t task, int32_t classes,
+                                             const sym_family_params_t *p, int32_t interval,
+                                             int32_t count, int32_t scaled, int32_t method) {
     enum { FIT_CANDIDATES = 8, FIT_TILE_ROWS = 128 };
     sym_family_search_t *s =
         sym_family_search_new(X, rows, cols, y, task, classes, p, FIT_CANDIDATES, FIT_TILE_ROWS);
     if (!s)
         return NULL;
-    if (sym_family_search_set_refinement(s, interval, count)) {
+    if (sym_family_search_set_refinement(s, interval, count) ||
+        ((scaled || method) && sym_family_search_set_optimizer(s, scaled, method))) {
         sym_family_search_free(s);
         return NULL;
     }
@@ -1223,8 +1431,13 @@ int sym_family_refine_accept(sym_family_model_t *m, int32_t head, const double *
     }
     candidate before = m->best[head], after = before;
     for (int t = 0; t < m->terms; t++) {
-        after.p0[t] = f32(clamp(updates[3 * t], -16, 16));
-        after.p1[t] = f32(clamp(updates[3 * t + 1], -16, 16));
+        /* Scaled search can store slopes beyond the legacy raw bounds. Keep
+         * that starting point feasible for post-fit refinement; ordinary models
+         * retain their old bounds. Frontend graphs use these same limits. */
+        double b0 = fabs(before.p0[t]) > 16 ? 2 * fabs(before.p0[t]) : 16;
+        double b1 = fabs(before.p1[t]) > 16 ? 2 * fabs(before.p1[t]) : 16;
+        after.p0[t] = f32(clamp(updates[3 * t], -b0, b0));
+        after.p1[t] = f32(clamp(updates[3 * t + 1], -b1, b1));
         after.coef[t] = f32(updates[3 * t + 2]);
     }
     after.bias = f32(updates[3 * m->terms]);

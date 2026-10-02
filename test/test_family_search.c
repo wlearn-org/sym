@@ -37,13 +37,15 @@ static double reference_term(const double *d, const double *row, const double *p
         return exp(fmax(-6, fmin(6, z)));
     }
 }
-static char *drive(const double *X, const double *y, int train_rows, int classes,
+static char *drive_options(const double *X, const double *y, int train_rows, int classes,
                            sym_family_params_t *p, int capacity, int rows, int interval,
-                           int refine_count, int32_t *size) {
+                           int refine_count, int scaled, int method, int32_t *size) {
     sym_family_search_t *s =
         sym_family_search_new(X, train_rows, 3, y, classes > 0, classes, p, capacity, rows);
     CHECK(s);
     CHECK(sym_family_search_set_refinement(s, interval, refine_count) == 0);
+    if (scaled || method)
+        CHECK(sym_family_search_set_optimizer(s, scaled, method) == 0);
     CHECK(sym_family_search_finish(s) == NULL);
     double *features = malloc((size_t)capacity * rows * p->terms * sizeof(double));
     CHECK(features);
@@ -88,6 +90,12 @@ static char *drive(const double *X, const double *y, int train_rows, int classes
     sym_family_search_free(s);
     free(features);
     return bytes;
+}
+static char *drive(const double *X, const double *y, int train_rows, int classes,
+                   sym_family_params_t *p, int capacity, int rows, int interval, int refine_count,
+                   int32_t *size) {
+    return drive_options(X, y, train_rows, classes, p, capacity, rows, interval, refine_count, 0, 0,
+                         size);
 }
 /* Exercise full/partial row tiles, candidate tails and the 8 MiB cache bound.
  * The external evaluator never caches: saved bytes must match the C fit path. */
@@ -262,6 +270,16 @@ int main(void) {
             sym_free_buffer(one);
             sym_free_buffer(many);
             sym_family_free(direct);
+        }
+        for (int scaled = 0; scaled < 2; scaled++) {
+            p.polish_batch = 0;
+            p.hierarchical = scaled;
+            int32_t a, b;
+            char *one = drive_options(X, y, 60, classes, &p, 1, 17, 1, 2, scaled, 1, &a);
+            char *many = drive_options(X, y, 60, classes, &p, 7, 60, 1, 2, scaled, 1, &b);
+            CHECK(a == b && memcmp(one, many, a) == 0);
+            sym_free_buffer(one);
+            sym_free_buffer(many);
         }
         p.islands = 1;
     }
