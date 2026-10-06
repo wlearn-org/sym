@@ -4,7 +4,7 @@ Python bindings for symbolic regression, classification and formula features.
 The C11 core owns search and portable fitted models. Optional Polygrad execution
 uses its public Python frontend; importing `wlearn_sym` does not import Polygrad.
 
-The optional Polygrad backend uses version **0.6.0**.
+The optional Polygrad backend requires **>=0.7.0**; tested with 0.7.0.
 
 ```sh
 pip install wlearn-sym

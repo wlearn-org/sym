@@ -11,7 +11,7 @@ function checkRuntime(runtime) {
     typeof runtime?.uop?.KernelInfo !== 'function'
   ) {
     throw new BackendError(
-      'Sym requires the Polygrad 0.6 Model, compiled-stage and disposable Tensor APIs; install polygrad >=0.6.0 <0.7.0 or pass a compatible runtime'
+      'Sym requires the Polygrad Model, compiled-stage and disposable Tensor APIs; install polygrad >=0.7.0 or pass a compatible runtime'
     )
   }
   return runtime

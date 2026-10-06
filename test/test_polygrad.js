@@ -16,7 +16,7 @@ test('incompatible borrowed runtime fails before tensor allocation without dispo
   }
   await assert.rejects(
     loadPolygrad(runtime),
-    error => error instanceof BackendError && /requires.*Polygrad 0\.6/.test(error.message)
+    error => error instanceof BackendError && /install polygrad >=0\.7\.0/.test(error.message)
   )
   assert.equal(disposed, false)
 })

@@ -6,7 +6,7 @@ JavaScript and Python provide wlearn lifecycle/artifacts and optional execution
 through Polygrad's public frontends. No private CUDA API or direct link to
 Polygrad's C core is required.
 
-Optional accelerated execution requires published Polygrad **0.6.0**.
+Optional accelerated execution requires published Polygrad **>=0.7.0**; tested with 0.7.0.
 The default C backend does not require Polygrad.
 
 ## Strategies and backends
@@ -299,4 +299,4 @@ or the C backend for those searches; the error does not silently change backends
 - Add reproducible quality/cost benchmarks, numerical and cross-runtime tests,
   and preserve large starting constants during post-fit gradient refinement.
 
-These controls are experimental and opt-in. Polygrad remains pinned to 0.6.0.
+These controls are experimental and opt-in. Polygrad 0.7.0 is the tested runtime.
