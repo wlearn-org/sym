@@ -1,147 +1,156 @@
 # @wlearn/sym
 
-Symbolic regression, classification and formula features for Node and browsers.
-C11 search runs through WebAssembly. Optional Polygrad scoring uses its public
-frontend, sharing a caller-supplied runtime when desired.
+Symbolic regression and classification for JavaScript: search for readable
+formulas that fit your data. The search runs in WebAssembly in Node and
+browsers. An optional [Polygrad](https://github.com/polygrad/polygrad) backend
+scores candidates on CPU, CUDA or WebGPU. Part of
+[wlearn](https://github.com/wlearn-org/wlearn).
 
-Install Sym, then add Polygrad if you need accelerated scoring:
+## Install
 
 ```sh
 npm install @wlearn/sym
-npm install polygrad@0.6.0  # optional
+npm install polygrad   # optional, only for the Polygrad backend (0.7 or newer)
 ```
+
+## Quick start
 
 ```js
 const { SymbolicRegressor } = require('@wlearn/sym')
-const X = [[0, 1], [1, 2], [2, 3], [3, 4]]
-const y = [1, 3, 5, 7]
-const model = await SymbolicRegressor.create({
-  strategy: 'family', backend: 'c', terms: 3,
-  population: 32, generations: 10, seed: 42
-})
-model.fit(X, y)
-const predictions = model.predict([[4, 5]])
-const text = model.formula({ format: 'text' })
-const bytes = model.save()
-const restored = await SymbolicRegressor.load(bytes)
+
+async function main() {
+  const X = [[0, 1], [1, 2], [2, 3], [3, 4]]
+  const y = [1, 3, 5, 7]
+
+  const model = await SymbolicRegressor.create({
+    strategy: 'family', backend: 'c', terms: 3,
+    population: 32, generations: 10, seed: 42
+  })
+  model.fit(X, y)
+  console.log(model.predict([[4, 5]]))
+  console.log(model.formula({ format: 'text' }))
+
+  const restored = await SymbolicRegressor.load(model.save())
+  console.log(restored.predict([[4, 5]]))
+  restored.dispose()
+  model.dispose()
+}
+
+main().catch(error => { console.error(error); process.exitCode = 1 })
 ```
+
+## Models
+
+- `SymbolicRegressor`: regression.
+- `SymbolicClassifier`: binary and multiclass classification. Adds
+  `predictProba`, `decisionFunction` and `classes`.
+- `FormulaTransformer`: learns formula features to use as inputs for another
+  model. Adds `transform` and `fitTransform`.
+
+## Search strategies
+
+| `strategy` + `backend` | What it searches | Models | `fit` |
+| --- | --- | --- | --- |
+| `tree` + `c` (default) | Expression trees, genetic programming | All three | Synchronous |
+| `family` + `c` | Sums of up to `terms` nonlinear terms with a linear readout | Regressor, Classifier | Synchronous |
+| `family` + `polygrad` | Same search; candidates scored with Polygrad | Regressor, Classifier | Promise |
+
+`tree` + `polygrad` is not supported and throws an error. Awaiting `fit` is
+always safe.
+
+## Main parameters
+
+Tree search (defaults): `population` (256), `generations` (120), `maxDepth` (6),
+`operatorSet` (`'full'`), `complexityPenalty` (0.001), `seed` (42).
+
+Family search (defaults): `terms` (6, from 1 to 32), `population` (128),
+`generations` (20), `hierarchical` (false), `ridge` (1e-8), `polishPasses` (0),
+`seed` (42).
+
+`operatorSet` is `'basic'`, `'smooth'`, `'full'` or a list of operator names.
+`validationFraction` holds out rows for model selection. All parameters are
+listed in `index.d.ts`.
 
 ## API
 
-`SymbolicRegressor`, `SymbolicClassifier` and `FormulaTransformer` share
-`create`, `fit`, `predict`, `score`, `getParams`, `setParams`, `save`, `load`,
-`dispose`, `capabilities` and `defaultSearchSpace`. Classifiers add
-`predictProba`, `decisionFunction` and `classes`. FormulaTransformer adds
-`transform`/`fitTransform`. Inputs may be rectangular arrays, core dense matrices,
-or flat typed arrays with a fitted feature count.
+- `static async create(params)` creates a model.
+- `fit(X, y)`: synchronous for the C backend, a Promise for the Polygrad
+  backend. `X` is an array of rows, a wlearn `DenseMatrix`, or a flat typed
+  array.
+- `predict(X)` and `score(X, y)` use the fitted formula; they never need
+  Polygrad.
+- `formula({ format: 'text' | 'json', index })` returns the fitted formula.
+  `index` selects a class for multiclass models.
+- `frontier()` returns the best formulas found, sorted by objective.
+- `getParams()` and `setParams(params)` read and change parameters. Changing
+  the strategy or backend clears the fitted model.
+- `save()` returns the model as bytes; `save(path)` also writes a file
+  (Node only). `static async load(bytes)` restores a model.
+- `dispose()` releases resources. Call it when replacing models in
+  long-running applications.
+- `capabilities` and `static defaultSearchSpace()` support wlearn AutoML.
 
-`formula({format: 'json'|'text', index?})` exposes fitted expressions;
-`frontier()` exposes the objective-sorted archive. `verify()` reports unsupported
-checks explicitly; Python offers optional Z3-backed tree verification.
-`save(path)` is Node-only and returns the bytes written; browsers use `save()`.
-Loaders register with `@wlearn/core` for nested Pipeline/ensemble artifacts.
-
-## Strategy and execution
-
-- Default `strategy: 'tree', backend: 'c'`: regression, classification, Transformer.
-- `strategy: 'family'`, `backend: 'c'|'polygrad'`: regression and classification.
-- Tree+Polygrad search and family Transformer are unsupported.
-
-C fits are synchronous. Family+Polygrad fits return a Promise; await them,
-including when composing Pipelines. Fitted prediction, score, probability,
-save and dispose remain synchronous and require no Polygrad. Explicit
-`predictPolygrad(X, options)` returns a Promise.
+## Polygrad backend
 
 ```js
-const accelerated = await SymbolicRegressor.create({
-  strategy: 'family', backend: 'polygrad',
-  terms: 6, seed: 42, validationFraction: 0.2,
-  hierarchical: false, polishPasses: 2, polishBatchSize: 32,
-  polygrad: { core: 'native', device: 'cuda' }
-})
-await accelerated.fit(X, y)
-const report = await accelerated.refinePolygrad(X, y, { epochs: 20, lr: 0.001 })
+const { SymbolicRegressor } = require('@wlearn/sym')
+
+async function main() {
+  const X = Array.from({ length: 64 }, (_, i) => [i / 16, Math.sin(i / 5)])
+  const y = X.map(([a, b]) => 2 * a + Math.sin(b))
+
+  const model = await SymbolicRegressor.create({
+    strategy: 'family', backend: 'polygrad', terms: 4, seed: 42,
+    polygrad: { core: 'native', device: 'cpu' }   // or device: 'cuda'
+  })
+  await model.fit(X, y)
+  const report = await model.refinePolygrad(X, y, { epochs: 20, lr: 0.001 })
+  console.log(model.formula({ format: 'text' }), report)
+  model.dispose()
+}
+
+main().catch(error => { console.error(error); process.exitCode = 1 })
 ```
 
-In browsers use `polygrad: { core: 'wasm', device: 'webgpu' }`. Sym selects the
-public async frontend. To share a runtime, create it through `polygrad/async`
-with `await createAsync(...)`, then pass `polygrad: runtime`. Borrowed runtimes
-are never disposed by Sym. Internally created runtimes are isolated and owned.
-Call model `dispose()` when replacing models in long-running applications.
+- In browsers, use `polygrad: { core: 'wasm', device: 'webgpu' }`.
+- To share a runtime between models, create it with `createAsync` from
+  `polygrad/async` and pass it as `polygrad: runtime`. A shared runtime is
+  never disposed by Sym.
+- `refinePolygrad(X, y, options)` tunes the fitted formula's constants by
+  gradient descent. Acceptance uses the C evaluator: family search uses its
+  configured validation split; tree search compares mean squared error on the
+  supplied rows, not the original held-out split. Pass the same rows used for `fit`.
+- `predictPolygrad(X)` evaluates the fitted formula on Polygrad and returns a
+  Promise.
+- Kernel compilation has a setup cost, so small fits are usually faster with
+  the default C backend.
 
-Family controls include `terms` (1–32, default 6), `population` (128),
-`generations` (20), `eliteCount` (8), `islands` (1), `immigrantRate` (0),
-`ridge` (1e-8), `polishPasses` (0), `polishBatchSize` (0), `hierarchical` (false).
-`scaleAware` (default false) searches nonlinear constants in train-only
-standardized coordinates while saving formulas in original input units.
-`polishMethod` defaults to `coordinate`; `lm` selects finite-difference damped
-least squares with QR readout refits (`polishPasses > 0`, `polishBatchSize = 0`).
-LM requires both training and validation-objective improvement for acceptance.
-Float32 residual differences can change LM steps and the resulting search path.
-It adds O(rows × terms) host residual storage/transfer with Polygrad; feature evaluation
-and QR factorization still execute on the selected device. These are experiments,
-not default changes. The separate `lossScale` option controls penalty/threshold units.
+## Saving and loading
 
-For family regression, `lossScale: 'target-variance'` interprets
-`complexityPenalty` and `tol` relative to the population variance of the rounded
-training targets. The default is `'absolute'`. Validation rows never enter this
-calculation; constant training targets give zero penalty and tolerance. MSE and
-saved formulas retain original units, and the artifact stores the resolved
-penalty. Ridge and the separate post-fit refinement `tolerance` stay unchanged.
-This controls target-unit sensitivity; it does not guarantee an identical search
-under floating-point rounding. Classification rejects this mode.
+`save()` uses the wlearn `.wlrn` format. The Python package `wlearn-sym` reads
+the same files, and models saved by earlier versions still load. Loaders are
+registered with `@wlearn/core`, so Sym models can be nested in pipelines and
+ensembles.
 
-Optional `localRefineInterval` and `localRefineCount` (both default 0) run the same
-polish before breeding every interval. Enable both with `polishPasses > 0`;
-count is at most `min(population, 32)`. Final polish remains enabled separately
-by `polishPasses`. This experimental schedule refits readouts with QR and works
-with either scorer; it does not introduce gradient optimization or change defaults.
-Positive polish batch sizes use independent proposals around a frozen base;
-zero retains sequential coordinate polish. Hierarchical terms can reference
-inputs or earlier terms. `operatorSet` accepts basic/smooth/full or a list;
-`operators` accepts a subset of the ten portable built-ins.
+## Notes and limitations
 
-Polygrad evaluates features, QR and losses for every candidate. C owns the
-search and small regularized triangular solves. `batchSize` (default `min(population, 512)`) is a
-transport setting; `scorerDtype` selects float32/float64 where supported. Native
-CPU/CUDA defaults to float64; WebGPU uses float32. Numerical differences may
-change near-tied selections; large unsupported cosine phases raise errors.
-Compilation can dominate small fits, so C remains the default.
+- Classifier probabilities come from sigmoid or softmax scores and are not
+  calibrated.
+- Results are reproducible for a seed on the same backend. Polygrad uses
+  float32 on WebGPU and float64 on native devices, which can pick a different
+  formula when candidates are nearly tied.
+- With the Polygrad backend, hierarchical families that combine division with
+  trigonometric operators can exceed a precision guard and raise an error. Use
+  the flat family or the C backend for those searches.
+- Experimental controls (`scaleAware`, `lossScale`, `polishMethod: 'lm'`,
+  `localRefineInterval`) are described in the
+  [repository README](https://github.com/wlearn-org/sym#family-search-and-numerical-contract).
 
-Family readouts minimize MSE plus ridge, including classification margin fitting.
-The seeded validation holdout is excluded from readout fitting and gradient
-training. Selection and family refinement acceptance use holdout MSE plus
-complexity; use the same input rows/order for refinement. `index` selects a
-multiclass head. Tree refinement remains regression-only with training-MSE
-acceptance. Probabilities are sigmoid/softmax scores, not calibrated uncertainty.
+## Compatibility
 
-The old `engine: 'pg-family'` spelling now selects the shared C search with
-Polygrad scoring; its former frontend search has been removed. Legacy tuning
-options such as `scoreMode` and `stackSummaries` do not configure the new scorer.
-Prefer explicit strategy/backend. Changing either invalidates the fitted model.
+The optional Polygrad backend requires `polygrad` 0.7 or newer. Uses
+`@wlearn/core` 0.3.
 
-## Persistence and development
+## License
 
-Tree bundles use `@1`; flat families use `@2`; hierarchical families use `@3`.
-Legacy JSON family `@1` artifacts remain readable without Polygrad, preserving
-old metrics on re-save. Refit writes the current family format. The static class
-`typeId` refers to tree models; `save()` writes the actual typeId.
-
-C source is canonical under the repository's `src/`; `csrc/` is generated.
-`dist/sym.js` and `dist/sym.mjs` provide browser bundles. Set
-`WLEARN_SYM_POLYGRAD_JS=/path/to/polygrad/js` for local Node checks and browser
-builds. Run `npm test`, `npm run test:types`, `npm run test:polygrad`, and
-`npm run test:browser`; WebGPU qualification uses `POLY_DEV=webgpu`.
-
-See the [repository numerical contract](https://github.com/wlearn-org/sym#family-search-and-numerical-contract)
-and LICENSE/NOTICE for semantics and licensing.
-
-Runtime reuse, the AutoML factory recipe and remaining numerical/cache
-limits are documented in the
-[repository qualification](https://github.com/wlearn-org/sym#runtime-reuse-qualification).
-Old runtimes fail early with a Polygrad 0.6 API requirement, before tensors are allocated.
-
-Hierarchical division can produce very large conservative feature bounds even
-from bounded input data. With Polygrad and trigonometric operators, this can
-trigger the cosine precision guard during search. Use the default flat family
-or the C backend for those searches; the error does not silently change backends.
+Apache-2.0. See `NOTICE` and `licenses/` for third-party attributions.

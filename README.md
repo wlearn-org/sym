@@ -16,7 +16,7 @@ The default C backend does not require Polygrad.
 | `tree` + `c` | Default tree search | Synchronous |
 | `family` + `c` | Additive or hierarchical family search | Synchronous |
 | `family` + `polygrad` | Same C search, device feature evaluation/QR/loss | Promise |
-| `tree` + `polygrad` | Unsupported; raises an error | — |
+| `tree` + `polygrad` | Unsupported; raises an error | - |
 
 Both family backends support regression and binary/multiclass classification.
 `FormulaTransformer` uses tree search. `predict`, `predictProba`, `score`, `save`
@@ -62,7 +62,7 @@ those standard environment selectors into the page.
 
 ## Family search and numerical contract
 
-Controls: `terms` 1–32 (default 6), `population` (128), `generations` (20),
+Controls: `terms` 1 to 32 (default 6), `population` (128), `generations` (20),
 `eliteCount` (8, less than population), `islands` (1), `immigrantRate` (0),
 `polishPasses` (0), `polishBatchSize` (0), `hierarchical` (false), `ridge` (1e-8).
 Each island selects within its own population. There is no family island
@@ -72,20 +72,20 @@ annealed parameter jitter. Unchanged elites retain their readouts and losses.
 The formula is a bias plus weighted terms. `operatorSet` accepts `basic`,
 `smooth`, `full`, or a list; `operators` accepts names or IDs. Built-ins are
 add/subtract/multiply/divide, sin/cos/tanh, logabs/sqrtabs/expclamp. Family division
-and log use epsilon 1e-6; exp clamps its argument to ±6. Tree operators retain
+and log use epsilon 1e-6; exp clamps its argument to +/-6. Tree operators retain
 their distinct protection rules. Arbitrary language callables are not portable
 operators.
 
 With `hierarchical: true`, source indices below `nFeatures` select input columns;
 `nFeatures + t` selects an earlier term `t`. Self/forward references are invalid.
-The model stores this directed structure. Formula text uses shared `t0`, `t1`, …
+The model stores this directed structure. Formula text uses shared `t0`, `t1`, ...
 definitions so nested expressions cannot produce exponentially large strings.
 
 Sequential polish (`polishBatchSize: 0`) evaluates dependent coordinate trials.
 Positive sizes request frozen-base batches: all active coordinate directions
 plus random multi-parameter proposals, followed by selection. The actual round
 size is at least the coordinate-trial count. This changes the polish policy;
-transport `batchSize` (1–512, default `min(population, 512)`) does not change proposal/RNG order.
+transport `batchSize` (1 to 512, default `min(population, 512)`) does not change proposal/RNG order.
 
 For family regression, `lossScale: 'target-variance'` interprets
 `complexityPenalty` and `tol` relative to the population variance of the rounded
@@ -126,7 +126,7 @@ Float32 storage and existing phase guards remain in force; large offsets may
 still require input preprocessing. See [benchmarks](bench/README.md).
 
 C fits readouts using centered/scaled double Givens QR for
-`mean_squared_error + ridge * sum(coef²)`, with an unpenalized intercept.
+`mean_squared_error + ridge * sum(coef^2)`, with an unpenalized intercept.
 Rank-deficient pivots receive zero coefficients; positive ridge is advised.
 Inputs, targets, term parameters, coefficients and returned C margins are
 float32-rounded. Intermediate features, intercepts and C QR use double precision.
@@ -148,7 +148,7 @@ tolerances, not identical search histories for arbitrary datasets/devices.
 `validationFraction` creates a seeded holdout excluded from centering/readout
 fitting. Selection, polish and early stopping use holdout MSE plus
 `complexityPenalty * complexity`; without a holdout, they use training MSE.
-The selected readout is not refit on the holdout. Classification fits ±1 margins
+The selected readout is not refit on the holdout. Classification fits +/-1 margins
 and converts them with sigmoid/softmax; these probabilities are not calibrated.
 
 `refinePolygrad(X, y, { epochs, lr, index })` / `refine_polygrad` use public
@@ -290,7 +290,7 @@ or the C backend for those searches; the error does not silently change backends
 
 ## Release history
 
-### 0.2.0 — 2026-10-02
+### 0.2.0 (2026-10-02)
 
 - Add optional in-loop family polish, train-only scaled constant coordinates,
   and damped least-squares refinement through C and public Polygrad scorers.
@@ -300,3 +300,7 @@ or the C backend for those searches; the error does not silently change backends
   and preserve large starting constants during post-fit gradient refinement.
 
 These controls are experimental and opt-in. Polygrad 0.7.0 is the tested runtime.
+
+## License
+
+Apache-2.0. See [js/LICENSE](js/LICENSE) and [js/NOTICE](js/NOTICE).
