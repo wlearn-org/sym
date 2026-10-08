@@ -70,7 +70,7 @@
   "devDependencies": {
     "esbuild": "^0.27.3",
     "playwright": "^1.58.2",
-    "polygrad": "0.7.0",
+    "polygrad": "0.7.1",
     "typescript": "^5.9.3"
   },
   "browser": {
